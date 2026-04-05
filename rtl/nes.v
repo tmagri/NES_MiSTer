@@ -235,15 +235,21 @@ reg odd_or_even = 1; // 1 == odd, 0 == even
 // -----------------------------------------------------------------------
 wire loader_done = (|mapper_flags);
 
+// 1. Identify if the mapper is FDS (Mapper 20 / 0x14)
+wire is_fds = (mapper_flags[7:0] == 8'h14);
+
+// 2. Cap overclock to 33% (Turbo) if the game relies on SDRAM (non-FDS)
+wire [1:0] effective_overclock = (overclock == 2'd2 && !is_fds) ? 2'd1 : overclock;
+
 // Latch OC level at reset so dividers never change mid-frame.
 reg [4:0] div_cpu_n = 5'd12;
 reg [2:0] div_ppu_n = 3'd4;
 
 always @(posedge clk) begin
     if (reset_nes) begin
-        case (loader_done ? overclock : 2'd0)
-            2'd1:    begin div_cpu_n <= 5'd9;  div_ppu_n <= 3'd3; end  // Mild ÷9/÷3
-            2'd2:    begin div_cpu_n <= 5'd6;  div_ppu_n <= 3'd2; end  // Full ÷6/÷2
+        case (loader_done ? effective_overclock : 2'd0)
+            2'd1:    begin div_cpu_n <= 5'd9;  div_ppu_n <= 3'd3; end  // Turbo ÷9/÷3
+            2'd2:    begin div_cpu_n <= 5'd6;  div_ppu_n <= 3'd2; end  // Extreme ÷6/÷2
             default: begin div_cpu_n <= 5'd12; div_ppu_n <= 3'd4; end  // Off  ÷12/÷4
         endcase
     end
@@ -261,10 +267,10 @@ reg [1:0] div_sys = 2'd0;
 wire cpu_ce  = (div_cpu == div_cpu_n);
 wire ppu_ce  = (div_ppu == div_ppu_n);
 assign ppu_ce_out = ppu_ce;
-wire cart_ce = (div_cpu == div_cpu_n - 5'd2); // 2 master cycles before cpu_ce
+wire cart_ce = (div_cpu == (effective_overclock == 2'd2 ? div_cpu_n - 5'd1 : div_cpu_n - 5'd2)); // 1 master cycle before cpu_ce on Extreme, 2 normally
 
 // Signals — all offsets relative to div_cpu_n so they scale with OC level
-wire cart_pre = (div_cpu >= div_cpu_n - 5'd6) && (div_cpu <= div_cpu_n - 5'd2);
+wire cart_pre = (div_cpu >= div_cpu_n - 5'd6) && (div_cpu <= (effective_overclock == 2'd2 ? div_cpu_n - 5'd1 : div_cpu_n - 5'd2));
 
 reg ppu_action_done;
 always @(posedge clk) begin
@@ -272,8 +278,8 @@ always @(posedge clk) begin
 	else if (ppu_ce) ppu_action_done <= 1;
 end
 
-wire ppu_read  = (overclock == 2'd2) ? ~ppu_action_done : (ppu_tick == 1);
-wire ppu_write = (overclock == 2'd2) ? ~ppu_action_done : (ppu_tick == 1);
+wire ppu_read  = (effective_overclock == 2'd2) ? ~ppu_action_done : (ppu_tick == 1);
+wire ppu_write = (effective_overclock == 2'd2) ? ~ppu_action_done : (ppu_tick == 1);
 
 // phi2 (M2 high phase): rises after address-setup time and falls at cpu_ce.
 // The setup time scales as div_cpu_n/3 so phi2 always overlaps with
@@ -288,8 +294,8 @@ wire phi2 = (div_cpu > (div_cpu_n / 3)) && (div_cpu < div_cpu_n);
 // of a second to render.
 // -----------------------------------------------------------------------
 wire [9:0] oc_extra_lines = 
-    (overclock == 2'd1) ? ((sys_type == 2'b00) ? 10'd87  : 10'd104) : // Mild 60fps (NTSC +87, PAL +104)
-    (overclock == 2'd2) ? ((sys_type == 2'b00) ? 10'd262 : 10'd312) : // Full 60fps (NTSC +262, PAL +312)
+    (effective_overclock == 2'd1) ? ((sys_type == 2'b00) ? 10'd87  : 10'd104) : // Turbo 60fps (NTSC +87, PAL +104)
+    (effective_overclock == 2'd2) ? ((sys_type == 2'b00) ? 10'd262 : 10'd312) : // Extreme 60fps (NTSC +262, PAL +312)
     10'd0;
 
 // The infamous NES jitter is important for accuracy, but wreks havok on modern devices and scalers,
@@ -565,7 +571,7 @@ APU apu(
 	.CS             (apu_cs),
 	.PAL            (sys_type == 2'b01),
 	.ce             (apu_ce),
-	.overclock      (overclock),
+	.overclock      (effective_overclock),
 	.reset          (reset),
 	.cold_reset     (cold_reset),
 	.ADDR           (addr[4:0]),
@@ -653,7 +659,7 @@ assign scanline = (corepause_active) ? scanline_paused : scanline_ppu;
 
 PPU ppu(
 	.clk              (clk),
-	.cs               (addr[15:13] == 3'b001 && ((overclock == 2'd2) ? ~ppu_action_done : phi2)),
+	.cs               (addr[15:13] == 3'b001 && ((effective_overclock == 2'd2) ? ~ppu_action_done : phi2)),
 	.RWn              (mr_int && !mw_int),
 	.rst_behavior     (ppu_rst_behavior),
 	.ce               (ppu_ce),
