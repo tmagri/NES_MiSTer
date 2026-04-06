@@ -20,7 +20,6 @@ module VramAddressGen (
 	input is_pre_render, // Is this the pre-render scanline
 	input trigger_2007,
 	input [8:0] cycle,
-	input [9:0] extra_lines, // OC: Passed to calculate deferred anti-jitter scroll writes
 	output [14:0] vram,
 	output [2:0] fine_x_scroll,  // Current vram value
 	// savestates
@@ -55,21 +54,7 @@ assign SS_vram_BACK[   34] = ppu_address_latch;
 assign SS_vram_BACK[52:51] = write_shift;
 assign SS_vram_BACK[63:55] = 9'b0; // free to be used
 
-// Anti-Jitter: If the CPU is overclocked, it will finish its cycle-counted HBlank wait loops too early, 
-// writing to $2006 mid-scanline and causing tearing. We trap early writes here and defer their application 
-// exactly to the edge of the screen (cycle 256).
-reg pending_2006b;
-always @(posedge clk) begin
-	if (reset) pending_2006b <= 1'b0;
-	else if (ce) begin
-		if (write_shift[1] && cycle < 256 && is_rendering && extra_lines != 0)
-			pending_2006b <= 1'b1;
-		else if (cycle == 256)
-			pending_2006b <= 1'b0;
-	end
-end
-
-wire write_2006b = (write_shift[1] && (cycle >= 256 || !is_rendering || extra_lines == 0)) || (pending_2006b && cycle == 256);
+wire write_2006b = write_shift[1];
 
 wire inc_horizontal = (cycle[2:0] == 7 && ((cycle <= 255) || (cycle >= 320 && cycle <= 335)) && is_rendering);
 wire inc_vertical = (cycle == 255) && is_rendering;
@@ -1436,7 +1421,6 @@ VramAddressGen vram0(
 	.is_pre_render (is_pre_render_line),
 	.trigger_2007  (vram_w_ppudata_d || vram_r_ppudata_d),
 	.cycle         (cycle),
-	.extra_lines   (extra_lines),
 	.vram          (vram),
 	.fine_x_scroll (fine_x_scroll),
 	 // savestates
