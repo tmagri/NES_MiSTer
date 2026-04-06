@@ -235,11 +235,15 @@ reg odd_or_even = 1; // 1 == odd, 0 == even
 // -----------------------------------------------------------------------
 wire loader_done = (|mapper_flags);
 
-// 1. Identify if the mapper is FDS (Mapper 20 / 0x14)
-wire is_fds = (mapper_flags[7:0] == 8'h14);
+// 1. Identify "Extreme-Safe" Mappers (FDS, NROM, UxROM, CNROM, AxROM)
+wire is_extreme_safe = (mapper_flags[7:0] == 8'h14) || // FDS
+                       (mapper_flags[7:0] == 8'h00) || // NROM (SMB1)
+                       (mapper_flags[7:0] == 8'h02) || // UxROM
+                       (mapper_flags[7:0] == 8'h03) || // CNROM
+                       (mapper_flags[7:0] == 8'h07);   // AxROM
 
-// 2. Cap overclock to 33% (Turbo) if the game relies on SDRAM (non-FDS)
-wire [1:0] effective_overclock = (overclock == 2'd2 && !is_fds) ? 2'd1 : overclock;
+// 2. Cap overclock to 33% (Turbo) if the mapper is NOT extreme-safe
+wire [1:0] effective_overclock = (overclock == 2'd2 && !is_extreme_safe) ? 2'd1 : overclock;
 
 // Latch OC level at reset so dividers never change mid-frame.
 reg [4:0] div_cpu_n = 5'd12;
