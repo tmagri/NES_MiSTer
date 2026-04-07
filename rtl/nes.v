@@ -126,6 +126,7 @@ module NES(
 	output  [9:0] scanline,
 	input         int_audio,
 	input         ext_audio,
+	input         smooth_audio,
 	output        apu_ce,
 	output        ppu_ce_out,
 	input         gg,
@@ -585,6 +586,7 @@ APU apu(
 	.IRQ            (apu_irq),
 	.put_ce         (put_ce),
 	.get_ce         (get_ce),
+	.smooth_audio   (smooth_audio),
 	// savestates
 	.SaveStateBus_Din  (SaveStateBus_Din ),
 	.SaveStateBus_Adr  (SaveStateBus_Adr ),
@@ -755,6 +757,7 @@ cart_top multi_mapper (
 	.audio_in          (audio_mappers),           // Amplified and inverted APU audio
 	.audio             (sample_ext),              // Mixed audio output from cart
 	.mapper_ce         (mapper_ce),               // Always runs at unoverclocked 1.78MHz
+	.smooth_audio      (smooth_audio),            // Option toggle
 	// SDRAM Communication
 	.prg_aout          (prg_linaddr),             // SDRAM adjusted PRG RAM address
 	.prg_allow         (prg_allow),               // Simulates internal CE/Locking

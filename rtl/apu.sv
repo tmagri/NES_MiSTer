@@ -278,7 +278,8 @@ module TriangleChan (
 	input  logic       LenCtr_Clock,
 	input  logic       LinCtr_Clock,
 	input  logic       Enabled,
-	output logic [3:0] Sample,
+	input  logic       smooth_audio,
+	output logic [11:0] Sample,
 	output logic       IsNonZero
 );
 	logic [10:0] Period, applied_period, TimerCtr;
@@ -290,13 +291,24 @@ module TriangleChan (
 
 	logic LenCtrZero;
 	logic subunit_write;
-	logic [3:0] sample_latch;
+	logic [11:0] sample_latch;
 
 	assign LinCtrZero = ~|LinCtr;
 	assign IsNonZero = lc;
 	assign subunit_write = (Addr == 0 || Addr == 3) & write;
 
-	assign Sample = (applied_period > 1 || allow_us) ? (SeqPos[3:0] ^ {4{~SeqPos[4]}}) : sample_latch;
+	wire [4:0] lookahead_SeqPos = SeqPos + 1'd1;
+	wire [3:0] lookahead_Y = lookahead_SeqPos[3:0] ^ {4{~lookahead_SeqPos[4]}};
+	wire [3:0] actual_Y = SeqPos[3:0] ^ {4{~SeqPos[4]}};
+
+	wire slope_up = (lookahead_Y > actual_Y);
+	wire slope_dn = (lookahead_Y < actual_Y);
+
+	logic [11:0] smooth_acc;
+	logic [13:0] err_acc;
+	wire [13:0] freq_adj = {2'd0, applied_period, 1'b1} + 1'b1;
+
+	assign Sample = (applied_period > 1 || allow_us) ? (smooth_audio ? smooth_acc : {actual_Y, 8'h00}) : sample_latch;
 
 	LenCounterUnit LenTri (
 		.clk            (clk),
@@ -319,10 +331,26 @@ module TriangleChan (
 			if (TimerCtr == 0) begin
 				TimerCtr <= Period;
 				applied_period <= Period;
-				if (IsNonZero & ~LinCtrZero)
+				if (IsNonZero & ~LinCtrZero) begin
 					SeqPos <= SeqPos + 1'd1;
+					smooth_acc <= {lookahead_Y, 8'h00};
+					err_acc <= 0;
+				end
 			end else begin
 				TimerCtr <= TimerCtr - 1'd1;
+				if (IsNonZero & ~LinCtrZero) begin
+					if (applied_period < 11'd8) begin
+						// Bypass smoothing for ultra-high frequencies
+						smooth_acc <= {actual_Y, 8'h00};
+						err_acc <= 0;
+					end else if (err_acc + 14'd256 >= freq_adj) begin
+						err_acc <= err_acc + 14'd256 - freq_adj;
+						if (slope_up && smooth_acc < 12'hF00) smooth_acc <= smooth_acc + 1'b1;
+						else if (slope_dn && smooth_acc > 12'h000) smooth_acc <= smooth_acc - 1'b1;
+					end else begin
+						err_acc <= err_acc + 14'd256;
+					end
+				end
 			end
 		end
 
@@ -357,7 +385,7 @@ module TriangleChan (
 		end
 
 		if (cold_reset) begin
-			sample_latch <= 4'hF;
+			sample_latch <= 12'hF00;
 			Period <= 0;
 			TimerCtr <= 0;
 			SeqPos <= 0;
@@ -365,6 +393,8 @@ module TriangleChan (
 			LinCtr <= 0;
 			LinCtrl <= 0;
 			line_reload <= 0;
+			smooth_acc <= 0;
+			err_acc <= 0;
 		end
 
 		if (applied_period > 1) sample_latch <= Sample;
@@ -893,6 +923,7 @@ module APU #(parameter [9:0] SSREG_INDEX_TOP, parameter [9:0] SSREG_INDEX_DMC1, 
 	output logic        IRQ,            // IRQ asserted high == asserted
 	output logic        get_ce,         // Clock enable for a get cycle
 	output logic        put_ce,         // Clock enable for a put cycle
+	input  logic        smooth_audio,   // NEW
 	// savestates
 	input       [63:0]  SaveStateBus_Din,
 	input       [ 9:0]  SaveStateBus_Adr,
@@ -979,7 +1010,8 @@ module APU #(parameter [9:0] SSREG_INDEX_TOP, parameter [9:0] SSREG_INDEX_DMC1, 
 	assign put_ce = ce & ~get_or_put;
 
 	logic [4:0] Enabled;
-	logic [3:0] Sq1Sample,Sq2Sample,TriSample,NoiSample;
+	logic [3:0] Sq1Sample,Sq2Sample,NoiSample;
+	logic [11:0] TriSample;
 	logic [6:0] DmcSample;
 	logic DmcIrq;
 	logic IsDmcActive;
@@ -1066,6 +1098,7 @@ module APU #(parameter [9:0] SSREG_INDEX_TOP, parameter [9:0] SSREG_INDEX_DMC1, 
 		.aclk1_d      (aclk1_delayed),
 		.reset        (reset),
 		.cold_reset   (cold_reset),
+		.allow_us     (allow_us),
 		.sq2          (1'b1),
 		.Addr         (ADDR[1:0]),
 		.DIN          (DIN),
@@ -1094,6 +1127,7 @@ module APU #(parameter [9:0] SSREG_INDEX_TOP, parameter [9:0] SSREG_INDEX_DMC1, 
 		.LenCtr_Clock (ClkL),
 		.LinCtr_Clock (ClkE),
 		.Enabled      (Enabled[2]),
+		.smooth_audio (smooth_audio),
 		.Sample       (TriSample),
 		.IsNonZero    (TriNonZero)
 	);
@@ -1152,6 +1186,7 @@ module APU #(parameter [9:0] SSREG_INDEX_TOP, parameter [9:0] SSREG_INDEX_DMC1, 
 		.noise        (NoiSample),
 		.triangle     (TriSample),
 		.dmc          (DmcSample),
+		.smooth_audio (smooth_audio),
 		.sample       (Sample)
 	);
 
@@ -1191,12 +1226,13 @@ endmodule
 // to more closely match real systems.
 
 module APUMixer (
-	input  logic  [3:0] square1,
-	input  logic  [3:0] square2,
-	input  logic  [3:0] triangle,
-	input  logic  [3:0] noise,
-	input  logic  [6:0] dmc,
-	output logic [15:0] sample
+	input  logic  [3:0]  square1,
+	input  logic  [3:0]  square2,
+	input  logic  [11:0] triangle, // Upgraded to 12-bit
+	input  logic  [3:0]  noise,
+	input  logic  [6:0]  dmc,
+	input  logic         smooth_audio,
+	output logic  [15:0] sample
 );
 
 logic [15:0] pulse_lut[32];
@@ -1205,12 +1241,6 @@ assign pulse_lut = '{
 	16'h1788, 16'h1A2E, 16'h1CC6, 16'h1F4E, 16'h21C9, 16'h2437, 16'h2697, 16'h28EB,
 	16'h2B32, 16'h2D6E, 16'h2F9E, 16'h31C3, 16'h33DD, 16'h35EC, 16'h37F2, 16'h39ED,
 	16'h3BDF, 16'h3DC7, 16'h3FA6, 16'h417D, 16'h434B, 16'h4510, 16'h46CD, 16'h0000
-};
-
-logic [5:0] tri_lut[16];
-assign tri_lut = '{
-	6'h00, 6'h04, 6'h08, 6'h0C, 6'h10, 6'h14, 6'h18, 6'h1C,
-	6'h20, 6'h24, 6'h28, 6'h2C, 6'h30, 6'h34, 6'h38, 6'h3C
 };
 
 logic [5:0] noise_lut[16];
@@ -1309,8 +1339,22 @@ assign mix_lut = '{
 
 wire [4:0] squares = square1 + square2;
 wire [15:0] ch1 = pulse_lut[squares];
-wire [8:0] mix = tri_lut[triangle] + noise_lut[noise] + dmc_lut[dmc];
-wire [15:0] ch2 = mix_lut[mix];
+
+// Base path matching original 4-bit output
+// tri_lut mapped the linear 4-bit triangle directly to a 6-bit output linearly (*4).
+wire [8:0] mix_reg = {triangle[11:8], 2'b00} + noise_lut[noise] + dmc_lut[dmc];
+wire [15:0] ch2_reg = mix_lut[mix_reg];
+
+// Linear interpolation to smoothly transition between the LUT intervals using 12-bit precision
+wire [8:0] mix_base = triangle[11:6] + noise_lut[noise] + dmc_lut[dmc];
+wire [15:0] val_base = mix_lut[mix_base];
+wire [15:0] val_next = mix_lut[mix_base + 1'b1];
+
+wire [5:0] tri_frac = triangle[5:0];
+wire [15:0] ch2_smooth = val_base + (((val_next - val_base) * {10'd0, tri_frac}) >> 6);
+
+// Toggle between standard and 12-bit smoothed
+wire [15:0] ch2 = smooth_audio ? ch2_smooth : ch2_reg;
 
 assign sample = ch1 + ch2;
 

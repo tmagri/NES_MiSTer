@@ -256,6 +256,7 @@ parameter CONF_STR = {
 	"P1OP,Extra Sprites,Off,On;",
 	"P1-;",
 	"P1OUV,Audio Enable,Both,Internal,Cart Expansion,None;",
+	"P1O[70],Pure Triangle,Off,On;",
 	"P2,Input Options;",
 	"P2-;",
 	"P2O9,Swap Joysticks,No,Yes;",
@@ -912,6 +913,7 @@ NES nes (
 	.audio_channels  (5'b11111),
 	.int_audio       (int_audio),
 	.ext_audio       (ext_audio),
+	.smooth_audio    (status[70]), // NEW: Routed the smooth audio bit to the NES module
 	.apu_ce          (apu_ce),
 	// Video
 	.ex_sprites      (status[25]),

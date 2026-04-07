@@ -1090,6 +1090,7 @@ module vrc6_mixed (
 	input   [7:0] data_in,
 	input  [15:0] audio_in,    // Inverted audio from APU
 	output [15:0] audio_out,
+	input         smooth_audio, // NEW
 	// savestates              
 	input       [63:0]  SaveStateBus_Din,
 	input       [ 9:0]  SaveStateBus_Adr,
@@ -1110,6 +1111,7 @@ vrc6sound snd_vrc6 (
 	.outSq1(vrc6sq1_out),
 	.outSq2(vrc6sq2_out),
 	.outSaw(vrc6saw_out),
+	.smooth_audio(smooth_audio), // NEW
 	// savestates
 	.SaveStateBus_Din  (SaveStateBus_Din ), 
 	.SaveStateBus_Adr  (SaveStateBus_Adr ),
@@ -1118,23 +1120,29 @@ vrc6sound snd_vrc6 (
 	.SaveStateBus_load (SaveStateBus_load),
 	.SaveStateBus_Dout (SaveStateBus_Dout)
 );
-
-//sound
-//    wire [5:0] vrc6_out;
-//	assign exp6 = 0;
+	//sound
 	wire [3:0] vrc6sq1_out;
 	wire [3:0] vrc6sq2_out;
-	wire [4:0] vrc6saw_out;
+	wire [11:0] vrc6saw_out; // Upgraded to genuine 12-bit
 
 	// VRC6 sound is mixed before amplification, and them amplified linearly
-	wire [5:0] exp_audio = vrc6sq1_out + vrc6sq2_out + vrc6saw_out;
-	wire [15:0] audio = {exp_audio, exp_audio, exp_audio[5:2]};
+	
+	// Original 6-bit mix (Extract top 5 bits of the 12-bit saw for compatibility)
+	wire [5:0] exp_audio_lo = vrc6sq1_out + vrc6sq2_out + vrc6saw_out[11:7];
 
-// VRC6 audio is much louder than APU audio, so match the levels we have to reduce it 
-// to about 43% to match the audio ratio of the original Famicom with AD3. Note that the
-// VRC6 audio is opposite polarity from APU audio.
+	// Audiophile 13-bit supersampled mix 
+	// Scale squares up to match the 12-bit sawtooth range by identically appending 7 zeroes (128x scale)
+	wire [12:0] exp_audio_hi = {2'd0, vrc6sq1_out, 7'd0} + {2'd0, vrc6sq2_out, 7'd0} + {1'b0, vrc6saw_out};
 
-	wire [16:0] mixed_audio = audio_in + (audio[15:1] + audio[15:3]);
+	// VRC6 audio is much louder than APU audio, so match the levels we have to reduce it 
+	// to about 43% to match the audio ratio of the original Famicom with AD3. Note that the
+	// VRC6 audio is opposite polarity from APU audio.
+	wire [15:0] audio_lo = {exp_audio_lo, exp_audio_lo, exp_audio_lo[5:2]}; // Mix out maps exactly to 63455 
+	wire [15:0] audio_hi = {exp_audio_hi, exp_audio_hi[12:10]}; // Super Mix out maps exactly to 63487
+
+	wire [15:0] audio_sel = smooth_audio ? audio_hi : audio_lo;
+
+	wire [16:0] mixed_audio = audio_in + (audio_sel[15:1] + audio_sel[15:3]);
 	assign audio_out = mixed_audio[16:1];
 
 endmodule
@@ -1149,7 +1157,8 @@ module vrc6sound(
 	input [7:0] din,
 	output [3:0] outSq1,       //range=0..0x0F
 	output [3:0] outSq2,       //range=0..0x0F
-	output [4:0] outSaw,       //range=0..0x1F
+	output [11:0] outSaw,      //range=0..0xFFF (Expanded for smooth sawtooth)
+	input  smooth_audio,       // NEW
 	// savestates              
 	input       [63:0]  SaveStateBus_Din,
 	input       [ 9:0]  SaveStateBus_Adr,
@@ -1174,11 +1183,51 @@ reg [3:0] duty0cnt, duty1cnt;
 reg [2:0] duty2cnt;
 reg [7:0] acc;
 
+reg [11:0] smooth_acc;
+reg [14:0] err_acc;
+wire [13:0] freq2_adj = {1'b0, freq2, 1'b1} + 14'd1;
+
+// 12-bit Fractional Error Distributing Divider Network
+// Adds precisely (vol2 << 4) micro-steps distributed uniformly over freq2_adj clocks
+wire [13:0] step_val = {2'd0, vol2, 4'd0}; // Step diff perfectly scaled for the missing 4-bits
+wire [15:0] next_err = err_acc + step_val;
+
+wire [18:0] fa_32 = {freq2_adj, 5'd0};
+wire [18:0] fa_16 = {1'b0, freq2_adj, 4'd0};
+wire [18:0] fa_8  = {2'd0, freq2_adj, 3'd0};
+wire [18:0] fa_4  = {3'd0, freq2_adj, 2'd0};
+wire [18:0] fa_2  = {4'd0, freq2_adj, 1'b0};
+wire [18:0] fa_1  = {5'd0, freq2_adj};
+
+wire [18:0] err_start = {3'd0, next_err}; // Promote logic to completely prevent bounds violations
+
+wire [18:0] err_32 = err_start >= fa_32 ? err_start - fa_32 : err_start;
+wire [7:0]  inc_32 = err_start >= fa_32 ? 8'd32 : 8'd0;
+
+wire [18:0] err_16 = err_32 >= fa_16 ? err_32 - fa_16 : err_32;
+wire [7:0]  inc_16 = err_32 >= fa_16 ? 8'd16 : 8'd0;
+
+wire [18:0] err_8  = err_16 >= fa_8 ? err_16 - fa_8 : err_16;
+wire [7:0]  inc_8  = err_16 >= fa_8 ? 8'd8 : 8'd0;
+
+wire [18:0] err_4  = err_8 >= fa_4 ? err_8 - fa_4 : err_8;
+wire [7:0]  inc_4  = err_8 >= fa_4 ? 8'd4 : 8'd0;
+
+wire [18:0] err_2  = err_4 >= fa_2 ? err_4 - fa_2 : err_4;
+wire [7:0]  inc_2  = err_4 >= fa_2 ? 8'd2 : 8'd0;
+
+wire [18:0] err_1  = err_2 >= fa_1 ? err_2 - fa_1 : err_2;
+wire [7:0]  inc_1  = err_2 >= fa_1 ? 8'd1 : 8'd0;
+
+wire [7:0] total_inc = inc_32 + inc_16 + inc_8 + inc_4 + inc_2 + inc_1;
+
 always@(posedge clk) begin
 	if(~enable) begin
 		en0<=0;
 		en1<=0;
 		en2<=0;
+		smooth_acc<=0;
+		err_acc<=0;
 	end else if (SaveStateBus_load) begin
 		mode0    <= SS_MAP1[    0];
 		mode1    <= SS_MAP1[    1];
@@ -1200,6 +1249,9 @@ always@(posedge clk) begin
 		duty1cnt <= SS_MAP2[47:44];
 		duty2cnt <= SS_MAP2[50:48];
 		acc      <= SS_MAP2[58:51];
+		// Re-sync smoothing variables natively on state load
+		smooth_acc <= {SS_MAP2[58:51], 4'd0};
+		err_acc    <= 0;
 	end else if(ce) begin
 		if(wr) begin
 			case(ain)
@@ -1233,16 +1285,29 @@ always@(posedge clk) begin
 			end
 		end
 		if(en2) begin
-			if(div2!=0)
+			if(div2!=0) begin
 				div2<=div2-1'd1;
-			else begin
+				if (freq2_adj < 14'd16) begin
+					// Bypass mathematically filtering for ultra-high frequencies (~111 kHz base sample step)
+					smooth_acc <= {acc, 4'd0}; 
+					err_acc <= 0;
+				end else begin
+					err_acc <= err_1[14:0];
+					smooth_acc <= smooth_acc + total_inc; // Purposely allows hardware-accurate 12-bit overflow wrapping
+				end
+			end else begin
 				div2<={freq2,1'b1};
 				if(duty2cnt==6) begin
 					duty2cnt<=0;
 					acc<=0;
+					smooth_acc<=0;
+					err_acc<=0;
 				end else begin
 					duty2cnt<=duty2cnt+1'd1;
 					acc<=acc+vol2;
+					// Re-sync explicitly at step boundaries to permanently prevent fractional drift
+					smooth_acc<={(acc+vol2), 4'd0}; 
+					err_acc<=0;
 				end
 			end
 		end
@@ -1253,11 +1318,12 @@ wire [4:0] duty0pos=duty0cnt+{1'b1,~duty0};
 wire [4:0] duty1pos=duty1cnt+{1'b1,~duty1};
 wire [3:0] ch0=((~duty0pos[4]|mode0)&en0)?vol0:4'd0;
 wire [3:0] ch1=((~duty1pos[4]|mode1)&en1)?vol1:4'd0;
-wire [4:0] ch2=en2?acc[7:3]:5'd0;
+
+wire [11:0] ch2_hi = en2 ? (smooth_audio ? smooth_acc : {acc[7:3], 7'd0}) : 12'd0;
 
 assign outSq1=ch0;
 assign outSq2=ch1;
-assign outSaw=ch2;
+assign outSaw=ch2_hi;
 
 // savestate
 assign SS_MAP1_BACK[    0] = mode0;
@@ -1568,4 +1634,3 @@ eReg_SavestateV #(SSREG_INDEX_MAP2, 64'h0000000000000000) iREG_SAVESTATE_MAP2 (c
 assign SaveStateBus_Dout = enable ? SaveStateBus_Dout_active : 64'h0000000000000000;
 
 endmodule
-

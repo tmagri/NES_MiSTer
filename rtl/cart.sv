@@ -64,6 +64,7 @@ module cart_top (
 	input       [1:0] max_diskside,   // FDS disk side count
 	input             fds_fast,       // FDS disk access speed
 	input             mapper_ce,      // Standard ~1.78MHz CPU speed
+	input             smooth_audio,   // Smooth Audio option
 	// savestates              
 	input       [63:0]  SaveStateBus_Din,
 	input       [ 9:0]  SaveStateBus_Adr,
@@ -2425,6 +2426,7 @@ vrc6_mixed snd_vrc6 (
 	.data_in(prg_din),
 	.audio_in(audio_in),
 	.audio_out(vrc6_audio),
+	.smooth_audio(smooth_audio),
 	// savestates
 	.SaveStateBus_Din  (SaveStateBus_Din ), 
 	.SaveStateBus_Adr  (SaveStateBus_Adr ),
