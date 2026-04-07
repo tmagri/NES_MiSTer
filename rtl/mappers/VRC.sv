@@ -505,7 +505,7 @@ module VRC6(
 	input               SaveStateBus_wren,
 	input               SaveStateBus_rst,
 	input               SaveStateBus_load,
-	output      [63:0]  SaveStateBus_Dout
+	output      [63:0]  SaveStateBus_Dout, input isolation_mode
 );
 
 assign prg_aout_b   = enable ? prg_aout : 22'hZ;
@@ -1035,7 +1035,8 @@ module vrc7_mixed (
 	input  [15:0] addr_in,
 	input   [7:0] data_in,
 	input  [15:0] audio_in,    // Inverted audio from APU
-	output [15:0] audio_out
+	output [15:0] audio_out,
+	input         isolation_mode
 );
 
 reg soff;
@@ -1076,7 +1077,8 @@ wire [13:0] audio_exp = ym2143audio + 14'h800;
 wire [13:0] audio_clip = audio_exp > 14'hFFF ? 14'hFFF : audio_exp;
 wire [15:0] audio_boost = {audio_clip[11:0], 4'b0000};
 wire [16:0] audio_mixed = audio_in[15:1] + audio_boost[15:1] + audio_boost[15:2] + audio_boost[15:4];
-assign audio_out = soff ? audio_in[15:1] : (audio_mixed[16] ? 16'hFFFF : audio_mixed[15:0]);
+wire [15:0] audio_vrc7 = audio_mixed[16] ? 16'hFFFF : audio_mixed[15:0];
+assign audio_out = (soff | isolation_mode) ? audio_in[15:1] : audio_vrc7;
 
 endmodule
 
@@ -1097,7 +1099,7 @@ module vrc6_mixed (
 	input               SaveStateBus_wren,
 	input               SaveStateBus_rst,
 	input               SaveStateBus_load,
-	output      [63:0]  SaveStateBus_Dout
+	output      [63:0]  SaveStateBus_Dout, input isolation_mode
 );
 
 vrc6sound snd_vrc6 (
@@ -1127,12 +1129,15 @@ vrc6sound snd_vrc6 (
 
 	// VRC6 sound is mixed before amplification, and them amplified linearly
 	
+	wire [3:0] vrc6sq1_m = isolation_mode ? 4'd0 : vrc6sq1_out;
+	wire [3:0] vrc6sq2_m = isolation_mode ? 4'd0 : vrc6sq2_out;
+
 	// Original 6-bit mix (Extract top 5 bits of the 12-bit saw for compatibility)
-	wire [5:0] exp_audio_lo = vrc6sq1_out + vrc6sq2_out + vrc6saw_out[11:7];
+	wire [5:0] exp_audio_lo = vrc6sq1_m + vrc6sq2_m + vrc6saw_out[11:7];
 
 	// Audiophile 13-bit supersampled mix 
 	// Scale squares up to match the 12-bit sawtooth range by identically appending 7 zeroes (128x scale)
-	wire [12:0] exp_audio_hi = {2'd0, vrc6sq1_out, 7'd0} + {2'd0, vrc6sq2_out, 7'd0} + {1'b0, vrc6saw_out};
+	wire [12:0] exp_audio_hi = {2'd0, vrc6sq1_m, 7'd0} + {2'd0, vrc6sq2_m, 7'd0} + {1'b0, vrc6saw_out};
 
 	// VRC6 audio is much louder than APU audio, so match the levels we have to reduce it 
 	// to about 43% to match the audio ratio of the original Famicom with AD3. Note that the

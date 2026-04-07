@@ -137,6 +137,7 @@ module NES(
 	output        save_written,
 	output        mapper_has_flashsaves,
 	input         debug_dots,
+	input         isolation_mode,
 
 	// savestates
 	output        mapper_has_savestate,
@@ -758,6 +759,7 @@ cart_top multi_mapper (
 	.audio             (sample_ext),              // Mixed audio output from cart
 	.mapper_ce         (mapper_ce),               // Always runs at unoverclocked 1.78MHz
 	.smooth_audio      (smooth_audio),            // Option toggle
+	.isolation_mode    (isolation_mode),
 	// SDRAM Communication
 	.prg_aout          (prg_linaddr),             // SDRAM adjusted PRG RAM address
 	.prg_allow         (prg_allow),               // Simulates internal CE/Locking

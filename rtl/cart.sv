@@ -65,6 +65,7 @@ module cart_top (
 	input             fds_fast,       // FDS disk access speed
 	input             mapper_ce,      // Standard ~1.78MHz CPU speed
 	input             smooth_audio,   // Smooth Audio option
+	input             isolation_mode, // Isolation mode option
 	// savestates              
 	input       [63:0]  SaveStateBus_Din,
 	input       [ 9:0]  SaveStateBus_Adr,
@@ -2316,7 +2317,7 @@ wire [15:0] ss5b_audio;
 SS5b_mixed snd_5bm (
 	.clk(clk),
 	.ce(ce),
-	.enable(me[69] | (me[31] && exp_audioe[5])),
+	.enable((me[69] | (me[31] && exp_audioe[5])) && ~isolation_mode),
 	.wren(prg_write),
 	.addr_in(prg_ain),
 	.data_in(prg_din),
@@ -2337,7 +2338,7 @@ namco163_mixed snd_n163 (
 	.clk(clk),
 	.ce(ce),
 	.submapper(flags[24:21]),
-	.enable(me[19] | (me[31] && exp_audioe[4])),
+	.enable((me[19] | (me[31] && exp_audioe[4])) && ~isolation_mode),
 	.wren(prg_write),
 	.addr_in(prg_ain),
 	.data_in(prg_din),
@@ -2365,7 +2366,7 @@ wire [7:0] mmc5_data;
 mmc5_mixed snd_mmc5 (
 	.clk(clk),
 	.ce(ce),
-	.enable(me[5] | (me[31] && exp_audioe[3])),
+	.enable((me[5] | (me[31] && exp_audioe[3])) && ~isolation_mode),
 	.wren(prg_write),
 	.rden(prg_read),
 	.addr_in(prg_ain),
@@ -2387,7 +2388,7 @@ wire [7:0] fds_data;
 fds_mixed snd_fds (
 	.clk(clk),
 	.ce(ce),
-	.enable(me[20] | (me[31] && exp_audioe[2])),
+	.enable((me[20] | (me[31] && exp_audioe[2])) && ~isolation_mode),
 	.wren(prg_write),
 	.addr_in(prg_ain),
 	.data_in(prg_din),
@@ -2412,7 +2413,8 @@ vrc7_mixed snd_vrc7 (
 	.addr_in(prg_ain),
 	.data_in(prg_din),
 	.audio_in(audio_in),
-	.audio_out(vrc7_audio)
+	.audio_out(vrc7_audio),
+	.isolation_mode(isolation_mode)
 );
 
 wire [15:0] vrc6_audio;
@@ -2427,6 +2429,7 @@ vrc6_mixed snd_vrc6 (
 	.audio_in(audio_in),
 	.audio_out(vrc6_audio),
 	.smooth_audio(smooth_audio),
+	.isolation_mode(isolation_mode),
 	// savestates
 	.SaveStateBus_Din  (SaveStateBus_Din ), 
 	.SaveStateBus_Adr  (SaveStateBus_Adr ),

@@ -306,7 +306,48 @@ module TriangleChan (
 
 	logic [11:0] smooth_acc;
 	logic [13:0] err_acc;
-	wire [13:0] freq_adj = {2'd0, applied_period, 1'b1} + 1'b1;
+	wire [13:0] freq_adj = {3'd0, applied_period} + 14'd1;
+
+	// 12-bit Fractional Error Distributing Divider Network for Triangle
+	// Calculates the exact dynamic step size needed to reach 12'hF00 naturally
+	wire [15:0] next_err = err_acc + 14'd256;
+
+	wire [21:0] fa_128 = {1'b0, freq_adj, 7'd0};
+	wire [21:0] fa_64  = {2'd0, freq_adj, 6'd0};
+	wire [21:0] fa_32  = {3'd0, freq_adj, 5'd0};
+	wire [21:0] fa_16  = {4'd0, freq_adj, 4'd0};
+	wire [21:0] fa_8   = {5'd0, freq_adj, 3'd0};
+	wire [21:0] fa_4   = {6'd0, freq_adj, 2'd0};
+	wire [21:0] fa_2   = {7'd0, freq_adj, 1'b0};
+	wire [21:0] fa_1   = {8'd0, freq_adj};
+
+	wire [21:0] err_start = {6'd0, next_err};
+
+	wire [21:0] err_128 = err_start >= fa_128 ? err_start - fa_128 : err_start;
+	wire [7:0]  inc_128 = err_start >= fa_128 ? 8'd128 : 8'd0;
+
+	wire [21:0] err_64 = err_128 >= fa_64 ? err_128 - fa_64 : err_128;
+	wire [7:0]  inc_64 = err_128 >= fa_64 ? 8'd64 : 8'd0;
+
+	wire [21:0] err_32 = err_64 >= fa_32 ? err_64 - fa_32 : err_64;
+	wire [7:0]  inc_32 = err_64 >= fa_32 ? 8'd32 : 8'd0;
+
+	wire [21:0] err_16 = err_32 >= fa_16 ? err_32 - fa_16 : err_32;
+	wire [7:0]  inc_16 = err_32 >= fa_16 ? 8'd16 : 8'd0;
+
+	wire [21:0] err_8  = err_16 >= fa_8 ? err_16 - fa_8 : err_16;
+	wire [7:0]  inc_8  = err_16 >= fa_8 ? 8'd8 : 8'd0;
+
+	wire [21:0] err_4  = err_8 >= fa_4 ? err_8 - fa_4 : err_8;
+	wire [7:0]  inc_4  = err_8 >= fa_4 ? 8'd4 : 8'd0;
+
+	wire [21:0] err_2  = err_4 >= fa_2 ? err_4 - fa_2 : err_4;
+	wire [7:0]  inc_2  = err_4 >= fa_2 ? 8'd2 : 8'd0;
+
+	wire [21:0] err_1  = err_2 >= fa_1 ? err_2 - fa_1 : err_2;
+	wire [7:0]  inc_1  = err_2 >= fa_1 ? 8'd1 : 8'd0;
+
+	wire [7:0] total_inc = inc_128 + inc_64 + inc_32 + inc_16 + inc_8 + inc_4 + inc_2 + inc_1;
 
 	assign Sample = (applied_period > 1 || allow_us) ? (smooth_audio ? smooth_acc : {actual_Y, 8'h00}) : sample_latch;
 
@@ -343,12 +384,18 @@ module TriangleChan (
 						// Bypass smoothing for ultra-high frequencies
 						smooth_acc <= {actual_Y, 8'h00};
 						err_acc <= 0;
-					end else if (err_acc + 14'd256 >= freq_adj) begin
-						err_acc <= err_acc + 14'd256 - freq_adj;
-						if (slope_up && smooth_acc < 12'hF00) smooth_acc <= smooth_acc + 1'b1;
-						else if (slope_dn && smooth_acc > 12'h000) smooth_acc <= smooth_acc - 1'b1;
 					end else begin
-						err_acc <= err_acc + 14'd256;
+						// Retain leftover fractional error
+						err_acc <= err_1[13:0]; 
+						
+						// Add the dynamic calculated step instead of just + 1'b1
+						if (slope_up) begin
+							if (smooth_acc + total_inc > 12'hF00) smooth_acc <= 12'hF00;
+							else smooth_acc <= smooth_acc + total_inc;
+						end else if (slope_dn) begin
+							if (smooth_acc < total_inc) smooth_acc <= 12'h000;
+							else smooth_acc <= smooth_acc - total_inc;
+						end
 					end
 				end
 			end
@@ -1187,6 +1234,7 @@ module APU #(parameter [9:0] SSREG_INDEX_TOP, parameter [9:0] SSREG_INDEX_DMC1, 
 		.triangle     (TriSample),
 		.dmc          (DmcSample),
 		.smooth_audio (smooth_audio),
+		.audio_channels(audio_channels),
 		.sample       (Sample)
 	);
 
@@ -1232,6 +1280,7 @@ module APUMixer (
 	input  logic  [3:0]  noise,
 	input  logic  [6:0]  dmc,
 	input  logic         smooth_audio,
+	input  logic  [4:0]  audio_channels,
 	output logic  [15:0] sample
 );
 
@@ -1337,20 +1386,26 @@ assign mix_lut = '{
 	16'h0000, 16'h0000, 16'h0000, 16'h0000, 16'h0000, 16'h0000, 16'h0000, 16'h0000
 };
 
-wire [4:0] squares = square1 + square2;
+wire [3:0] s1_m = square1 & {4{audio_channels[0]}};
+wire [3:0] s2_m = square2 & {4{audio_channels[1]}};
+wire [11:0] t_m = triangle & {12{audio_channels[2]}};
+wire [3:0] n_m = noise   & {4{audio_channels[3]}};
+wire [6:0] d_m = dmc     & {7{audio_channels[4]}};
+
+wire [4:0] squares = s1_m + s2_m;
 wire [15:0] ch1 = pulse_lut[squares];
 
 // Base path matching original 4-bit output
 // tri_lut mapped the linear 4-bit triangle directly to a 6-bit output linearly (*4).
-wire [8:0] mix_reg = {triangle[11:8], 2'b00} + noise_lut[noise] + dmc_lut[dmc];
+wire [8:0] mix_reg = {t_m[11:8], 2'b00} + noise_lut[n_m] + dmc_lut[d_m];
 wire [15:0] ch2_reg = mix_lut[mix_reg];
 
 // Linear interpolation to smoothly transition between the LUT intervals using 12-bit precision
-wire [8:0] mix_base = triangle[11:6] + noise_lut[noise] + dmc_lut[dmc];
+wire [8:0] mix_base = t_m[11:6] + noise_lut[n_m] + dmc_lut[d_m];
 wire [15:0] val_base = mix_lut[mix_base];
 wire [15:0] val_next = mix_lut[mix_base + 1'b1];
 
-wire [5:0] tri_frac = triangle[5:0];
+wire [5:0] tri_frac = t_m[5:0];
 wire [15:0] ch2_smooth = val_base + (((val_next - val_base) * {10'd0, tri_frac}) >> 6);
 
 // Toggle between standard and 12-bit smoothed
