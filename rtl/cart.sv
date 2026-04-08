@@ -67,7 +67,6 @@ module cart_top (
 	input             mapper_irq_pause, // Pause cycle-based mappers during OC extended Vblank
 	input       [1:0] overclock,      // Overclock mode (0=off, 1=turbo, 2=medium, 3=extreme)
 	input             smooth_audio,   // Smooth Audio option
-	input             isolation_mode, // Isolation mode option
 	// savestates              
 	input       [63:0]  SaveStateBus_Din,
 	input       [ 9:0]  SaveStateBus_Adr,
@@ -1555,7 +1554,6 @@ VRC1 vrc1(
 	.flags_out_b(flags_out_b),
 	.mapper_ce      (mapper_ce),
 	.smooth_audio   (smooth_audio),
-	.isolation_mode (isolation_mode),
 	.audio_in   (audio_in),
 	.audio_b    (audio_out_b),
 	// savestates
@@ -1597,7 +1595,6 @@ VRC3 vrc3(
 	.flags_out_b(flags_out_b),
 	.mapper_ce      (mapper_ce),
 	.smooth_audio   (smooth_audio),
-	.isolation_mode (isolation_mode),
 	.audio_in   (audio_in),
 	.audio_b    (audio_out_b),
 	// savestates
@@ -1639,7 +1636,6 @@ VRC24 vrc24(
 	.flags_out_b(flags_out_b),
 	.mapper_ce      (mapper_ce),
 	.smooth_audio   (smooth_audio),
-	.isolation_mode (isolation_mode),
 	.audio_in   (audio_in),
 	.audio_b    (audio_out_b),
 	// savestates
@@ -1681,7 +1677,6 @@ VRC5 vrc5(
 	.flags_out_b(flags_out_b),
 	.mapper_ce      (mapper_ce),
 	.smooth_audio   (smooth_audio),
-	.isolation_mode (isolation_mode),
 	.audio_in   (audio_in),
 	.audio_b    (audio_out_b),
 	// Special ports
@@ -1735,7 +1730,6 @@ VRC6 vrc6(
 	.flags_out_b(flags_out_b),
 	.mapper_ce      (mapper_ce),
 	.smooth_audio   (smooth_audio),
-	.isolation_mode (isolation_mode),
 	.audio_in       (vrc6_audio),
 	.audio_b   (audio_out_b),
 	// savestates
@@ -1777,7 +1771,6 @@ VRC7 vrc7(
 	.flags_out_b(flags_out_b),
 	.mapper_ce      (mapper_ce),
 	.smooth_audio   (smooth_audio),
-	.isolation_mode (isolation_mode),
 	.audio_in       (vrc7_audio),
 	.audio_b   (audio_out_b)
 );
@@ -2338,7 +2331,7 @@ wire [15:0] ss5b_audio;
 SS5b_mixed snd_5bm (
 	.clk(clk),
 	.ce(ce),
-	.enable((me[69] | (me[31] && exp_audioe[5])) && ~isolation_mode),
+	.enable(me[69] | (me[31] && exp_audioe[5])),
 	.wren(prg_write),
 	.addr_in(prg_ain),
 	.data_in(prg_din),
@@ -2359,7 +2352,7 @@ namco163_mixed snd_n163 (
 	.clk(clk),
 	.ce(ce),
 	.submapper(flags[24:21]),
-	.enable((me[19] | (me[31] && exp_audioe[4])) && ~isolation_mode),
+	.enable(me[19] | (me[31] && exp_audioe[4])),
 	.wren(prg_write),
 	.addr_in(prg_ain),
 	.data_in(prg_din),
@@ -2387,7 +2380,7 @@ wire [7:0] mmc5_data;
 mmc5_mixed snd_mmc5 (
 	.clk(clk),
 	.ce(ce),
-	.enable((me[5] | (me[31] && exp_audioe[3])) && ~isolation_mode),
+	.enable(me[5] | (me[31] && exp_audioe[3])),
 	.wren(prg_write),
 	.rden(prg_read),
 	.addr_in(prg_ain),
@@ -2409,7 +2402,7 @@ wire [7:0] fds_data;
 fds_mixed snd_fds (
 	.clk(clk),
 	.ce(ce),
-	.enable((me[20] | (me[31] && exp_audioe[2])) && ~isolation_mode),
+	.enable(me[20] | (me[31] && exp_audioe[2])),
 	.wren(prg_write),
 	.addr_in(prg_ain),
 	.data_in(prg_din),
@@ -2436,8 +2429,7 @@ vrc7_mixed snd_vrc7 (
 	.audio_in       (audio_in),
 	.audio_out      (vrc7_audio),
 	.mapper_ce      (mapper_ce),
-	.smooth_audio   (smooth_audio),
-	.isolation_mode (isolation_mode)
+	.smooth_audio   (smooth_audio)
 );
 
 wire [15:0] vrc6_audio;
@@ -2454,7 +2446,6 @@ vrc6_mixed snd_vrc6 (
 	.mapper_ce      (mapper_ce),
 	.overclock      (overclock),
 	.smooth_audio   (smooth_audio),
-	.isolation_mode (isolation_mode),
 	// savestates
 	.SaveStateBus_Din  (SaveStateBus_Din ), 
 	.SaveStateBus_Adr  (SaveStateBus_Adr ),

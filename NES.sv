@@ -256,7 +256,6 @@ parameter CONF_STR = {
 	"P1OP,Extra Sprites,Off,On;",
 	"P1-;",
 	"P1OUV,Audio Enable,Both,Internal,Cart Expansion,None;",
-	"P1O[70],Only Triangle,Off,On;",
 	"P1O[73],Smooth Audio,Off,On;",
 	"P2,Input Options;",
 	"P2-;",
@@ -911,8 +910,7 @@ NES nes (
 	.gg_avail        (gg_avail),
 	// Audio
 	.sample          (sample),
-	.audio_channels  (status[70] ? 5'b00100 : 5'b11111),
-	.isolation_mode  (status[70]),
+	.audio_channels  (5'b11111),
 	.int_audio       (int_audio),
 	.ext_audio       (ext_audio),
 	.smooth_audio    (status[73]), // Use bit 73 for smoothing
@@ -994,7 +992,7 @@ NES nes (
 	.SAVE_out_ena            (ss_req),           // one cycle high for each action
 	.SAVE_out_be             (ss_be),
 	.SAVE_out_done           (ss_ack),           // should be one cycle high when write is done or read value is valid
-	.overclock               (status[72:71])     // 0=off, 1=mild 60fps, 2=full 60fps
+	.overclock               (status[72:71])     
 );
 
 wire [24:0] cpu_addr;
