@@ -584,32 +584,31 @@ wire stereo_en = status[74];
 // sample_ext now contains PURE expansion audio (APU is muted to the cart)
 wire [15:0] exp_only = ext_audio ? sample_ext : 16'h0;
 
-// Stereo Mix
-wire [16:0] apu_l_sum = int_audio ? (
-                        ({1'b0, sample_sq1} >> 1) + ({1'b0, sample_sq1} >> 3) + ({1'b0, sample_sq1} >> 5) +
-                        ({1'b0, sample_tri} >> 1) + ({1'b0, sample_tri} >> 3) + ({1'b0, sample_tri} >> 5) +
-                        ({1'b0, sample_dmc} >> 1) + ({1'b0, sample_dmc} >> 3) + ({1'b0, sample_dmc} >> 5)
-                        ) : 17'd0;
-                        
-wire [16:0] apu_r_sum = int_audio ? (
-                        ({1'b0, sample_sq2} >> 1) + ({1'b0, sample_sq2} >> 3) + ({1'b0, sample_sq2} >> 5) +
-                        ({1'b0, sample_noi} >> 1) + ({1'b0, sample_noi} >> 3) + ({1'b0, sample_noi} >> 5) +
-                        ({1'b0, sample_dmc} >> 1) + ({1'b0, sample_dmc} >> 3) + ({1'b0, sample_dmc} >> 5)
-                        ) : 17'd0;
+// Unified internal sums
+wire [16:0] apu_l_stereo = (
+	({1'b0, sample_sq1} >> 1) + ({1'b0, sample_sq1} >> 3) + ({1'b0, sample_sq1} >> 5) + 
+	({1'b0, sample_tri} >> 1) + ({1'b0, sample_tri} >> 3) + ({1'b0, sample_tri} >> 5) + 
+	({1'b0, sample_dmc} >> 1) + ({1'b0, sample_dmc} >> 3) + ({1'b0, sample_dmc} >> 5)
+);
 
-// Mono Mix
-// Shift APU sample right by 1 to halve the volume.
-wire [16:0] apu_mono_sum = int_audio ? ({1'b0, sample} >> 1) : 17'd0;
+wire [16:0] apu_r_stereo = (
+	({1'b0, sample_sq2} >> 1) + ({1'b0, sample_sq2} >> 3) + ({1'b0, sample_sq2} >> 5) + 
+	({1'b0, sample_noi} >> 1) + ({1'b0, sample_noi} >> 3) + ({1'b0, sample_noi} >> 5) + 
+	({1'b0, sample_dmc} >> 1) + ({1'b0, sample_dmc} >> 3) + ({1'b0, sample_dmc} >> 5)
+);
 
-// Combine channels and add a safe DC offset (17'h02000) to keep the resting signal 
-// entirely off the extreme negative DAC rail, eliminating start/stop popping and wrap-around clipping.
-wire [16:0] left_mix  = apu_l_sum    + {1'b0, exp_only} + 17'h02000;
-wire [16:0] right_mix = apu_r_sum    + {1'b0, exp_only} + 17'h02000;
-wire [16:0] mono_mix  = apu_mono_sum + {1'b0, exp_only} + 17'h02000;
+wire [16:0] apu_mono_downmix = (({1'b0, apu_l_stereo} + {1'b0, apu_r_stereo}) >> 1);
 
-// Apply saturation to prevent integer wrapping/screeching on extreme volume peaks
-assign audio_l_pre = stereo_en ? (left_mix[16]  ? 16'hFFFF : left_mix[15:0])  : (mono_mix[16] ? 16'hFFFF : mono_mix[15:0]);
-assign audio_r_pre = stereo_en ? (right_mix[16] ? 16'hFFFF : right_mix[15:0]) : (mono_mix[16] ? 16'hFFFF : mono_mix[15:0]);
+wire [16:0] apu_l_sum = int_audio ? (stereo_en ? apu_l_stereo : apu_mono_downmix) : 17'd0;
+wire [16:0] apu_r_sum = int_audio ? (stereo_en ? apu_r_stereo : apu_mono_downmix) : 17'd0;
+
+// Final mix
+wire [16:0] left_mix  = apu_l_sum + {1'b0, exp_only} + 17'h02000;
+wire [16:0] right_mix = apu_r_sum + {1'b0, exp_only} + 17'h02000;
+
+// High quality output with saturation
+assign audio_l_pre = left_mix[16]  ? 16'hFFFF : left_mix[15:0];
+assign audio_r_pre = right_mix[16] ? 16'hFFFF : right_mix[15:0];
 
 // Audio Stretching (Set to 1.0x as pitch is now corrected internally in APU/Mappers)
 audio_stretch stretch_l (
