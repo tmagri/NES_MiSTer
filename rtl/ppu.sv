@@ -175,6 +175,7 @@ module ClockGen #(parameter USE_SAVESTATE = 0) (
 	input [1:0] sys_type,
 	input is_rendering,
 	input [9:0] extra_lines,  // OC: extra blank scanlines appended to vblank (0=off)
+	input oc_method,
 	output reg [9:0] scanline,
 	output reg [8:0] cycle,
 	output reg is_in_vblank,
@@ -204,7 +205,8 @@ assign evenframe = is_even_frame;
 // Dendy is 291 to 310
 wire [9:0] vblank_start_sl;
 wire [9:0] vblank_end_sl;
-wire [8:0] vsync_start_sl;
+wire [9:0] vblank_end_status_sl;
+wire [9:0] vsync_start_sl;
 wire [8:0] last_sl;
 wire skip_en;
 reg [3:0] rendering_sr;
@@ -212,24 +214,27 @@ reg [3:0] rendering_sr;
 always_comb begin
 	case (sys_type)
 		2'b00,2'b11: begin // NTSC/Vs.
-			vblank_start_sl = 10'd241;
-			vblank_end_sl   = 10'd260 + extra_lines;
-			vsync_start_sl  = 9'd244;
-			skip_en         = 1'b1;
+			vblank_start_sl      = 10'd241 + (oc_method ? extra_lines : 10'd0);
+			vblank_end_sl        = 10'd260 + extra_lines;
+			vblank_end_status_sl = 10'd261 + (oc_method ? extra_lines : 10'd0);
+			vsync_start_sl       = 10'd244;
+			skip_en              = 1'b1;
 		end
 
 		2'b01: begin       // PAL
-			vblank_start_sl = 10'd241;
-			vblank_end_sl   = 10'd310 + extra_lines;
-			vsync_start_sl  = 9'd269;
-			skip_en         = 1'b0;
+			vblank_start_sl      = 10'd241 + (oc_method ? extra_lines : 10'd0);
+			vblank_end_sl        = 10'd310 + extra_lines;
+			vblank_end_status_sl = 10'd311 + (oc_method ? extra_lines : 10'd0);
+			vsync_start_sl       = 10'd269;
+			skip_en              = 1'b0;
 		end
 
 		2'b10: begin       // Dendy
-			vblank_start_sl = 10'd291;
-			vblank_end_sl   = 10'd310 + extra_lines;
-			vsync_start_sl  = 9'd269;
-			skip_en         = 1'b0;
+			vblank_start_sl      = 10'd291 + (oc_method ? extra_lines : 10'd0);
+			vblank_end_sl        = 10'd310 + extra_lines;
+			vblank_end_status_sl = 10'd311 + (oc_method ? extra_lines : 10'd0);
+			vsync_start_sl       = 10'd269;
+			skip_en              = 1'b0;
 		end
 	endcase
 end
@@ -245,13 +250,15 @@ assign end_of_line = at_last_cycle_group && (cycle[3:0] == (skip_pixel ? 3 : 4))
 
 // Confimed with Visual 2C02
 // All vblank clocked registers should have changed and be readable by cycle 1 of 241/261
-assign entering_vblank = (cycle == 0) && ({1'b0, scanline} == vblank_start_sl);
 assign exiting_vblank  = (cycle == 0) && is_pre_render;
+assign entering_vblank = (cycle == 0) && ({1'b0, scanline} == vblank_start_sl);
+
+wire exiting_vblank_status = (cycle == 0) && (({1'b0, scanline} == vblank_end_status_sl) || is_pre_render);
 
 assign is_vbe_sl = ({1'b0, scanline} == vblank_end_sl);
 
 // New value for is_in_vblank flag
-wire new_is_in_vblank = entering_vblank ? 1'b1 : exiting_vblank ? 1'b0 : is_in_vblank;
+wire new_is_in_vblank = entering_vblank ? 1'b1 : exiting_vblank_status ? 1'b0 : is_in_vblank;
 
 // Savestates
 wire [63:0] SS_CLKGEN;
@@ -282,6 +289,7 @@ endgenerate
 
 wire hsync_period = (cycle >= 278 && cycle <= 302);
 wire hblank_period = (cycle >= 269 && cycle <= 326);
+wire [9:0] video_vblank_start = (sys_type == 2'b10) ? 10'd291 : 10'd241;
 
 // Set if the current line is line 0..239
 always @(posedge clk) if (reset) begin
@@ -320,8 +328,8 @@ end else if (ce) begin
 		vsync <= 1;
 	if (scanline == (vsync_start_sl + 3'd3) && hsync_period)
 		vsync <= 0;
-
-	if (scanline == 9'd241 && hblank_period)
+	
+	if (scanline == video_vblank_start && hblank_period)
 		vblank <= 1;
 	if (is_pre_render && hblank_period)
 		vblank <= 0;
@@ -1265,6 +1273,7 @@ module PPU(
 	input         extra_sprites,
 	input  [1:0]  mask,
 	input  [9:0]  extra_lines,  // OC: extra blank scanlines (0 = normal)
+	input         oc_method,
 	output        render_ena_out,
 	output        evenframe,
 	// savestates
@@ -1360,7 +1369,7 @@ assign render_ena_out = rendering_regs;
 
 // 2C02 has an "is_vblank" flag that is true from pixel 0 of line 241 to pixel 0 of line 0;
 wire is_rendering = rendering_enabled && (scanline < 240 || is_pre_render_line);
-wire is_rendering_d = re_sr[2] && (scanline < 240 || (is_pre_render_line && cycle != 0) || (scanline == 241 && cycle == 0));
+wire is_rendering_d = re_sr[2] && (scanline < 240 || (is_pre_render_line && cycle != 0) || entering_vblank);
 wire is_vbe_sl;
 
 wire clear_signal = is_pre_render_line;
@@ -1368,7 +1377,7 @@ wire clear_signal = is_pre_render_line;
 // Overclocking can cause the CPU to poll Sprite 0 before VBlank even ends.
 // Clearing the flag at the start of the post-render line (240) ensures
 // the CPU sees '0' and correctly waits for the next frame's Sprite 0 hit.
-wire clear_flags = clear_signal || (scanline == 240 && cycle == 0 && |extra_lines);
+wire clear_flags = clear_signal || (scanline == 240 && cycle == 0 && |extra_lines && !oc_method);
 
 wire [13:0] vram_a;
 reg [7:0] vram_a_byte;
@@ -1395,6 +1404,7 @@ ClockGen clock(
 	.vsync               (vsync),
 	.hblank              (hblank),
 	.vblank              (vblank),
+	.oc_method           (oc_method),
 	// savestates
 	.SaveStateBus_Din  (SaveStateBus_Din ),
 	.SaveStateBus_Adr  (SaveStateBus_Adr ),
@@ -1805,10 +1815,15 @@ wire [5:0] color1 = (mask_right | mask_left | mask_pal) ? 6'h0E : color2;
 wire clear_nmi = (clear_signal | (read && ain == 2));
 wire set_nmi = entering_vblank & ~clear_nmi;
 
+// --- Protect $2002 polling during Overclocking ---
+wire oc_active = (|extra_lines); // True if Vblank extension padding is active
+wire safe_nmi_read = nmi_occured | (oc_active & entering_vblank);
+
+// Modified PPU bus read
 wire [7:0] ppu_dbus =
 	write ? din :
 	read ? (
-		(ain == 2) ? {nmi_occured, (spr0_hit || sprite0_hit_bg) & ~clear_flags, sprite_overflow & ~clear_flags, latched_dout[4:0]} : // PPUSTATUS
+		(ain == 2) ? {safe_nmi_read, (spr0_hit || sprite0_hit_bg) & ~clear_flags, sprite_overflow & ~clear_flags, latched_dout[4:0]} : // PPUSTATUS
 		(ain == 4) ? oam_bus : // OAMDATA
 		(ain == 7) ? (is_pal_address ? {latched_dout[7:6], (grayscale ? {color1[5:4], 4'b0000} : color1)} : vram_latch) : // PPUDATA
 		latched_dout) :

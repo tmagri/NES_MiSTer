@@ -179,7 +179,8 @@ module NES(
 	output        SAVE_out_ena,   // one cycle high for each action
 	output  [7:0] SAVE_out_be,
 	input         SAVE_out_done,   // should be one cycle high when write is done or read value is valid
-	input   [1:0] overclock        // 0=off, 1=mild 60fps, 2=full 60fps
+	input   [1:0] overclock,       // 0=off, 1=mild 60fps, 2=full 60fps
+	input         oc_method
 );
 
 
@@ -469,6 +470,7 @@ ClockGen clockgen_pause(
 	//.entering_vblank     (entering_vblank),
 	//.is_pre_render       (is_pre_render_line),
 	.short_frame         (skip_pixel_pause),
+	.oc_method           (oc_method),
 	//.is_vbe_sl           (is_vbe_sl)
 	.evenframe           (evenframe_paused)
 );
@@ -701,6 +703,7 @@ PPU ppu(
 	.vblank           (vblank),
 	.hsync            (hsync),
 	.vsync            (vsync),
+	.oc_method        (oc_method),
 	// savestates
 	.SaveStateBus_Din       (SaveStateBus_Din        ),
 	.SaveStateBus_Adr       (SaveStateBus_Adr        ),

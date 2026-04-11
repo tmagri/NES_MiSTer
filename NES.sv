@@ -240,6 +240,7 @@ parameter CONF_STR = {
 	"d7rB,Restore state(F1-F4);",
 	"-;",
 	"O[72:71],CPU Overclock,Off,Turbo (1.33x),Medium (1.50x),Extreme (2.00x);",
+	"O[75],OC Method,VBlank,Postrender;",
 	"-;",
 	"P1,Audio & Video;",
 	"P1-;",
@@ -895,11 +896,13 @@ wire reset_nes =
 // to ensure all pipeline registers, clock dividers and PPU state settle completely.
 reg [1:0] old_sys_type;
 reg [1:0] old_overclock;
+reg       old_oc_method;
 reg [19:0] oc_reset_cnt = 0;
 always @(posedge clk) begin
     old_sys_type  <= effective_sys_type;
     old_overclock <= status[72:71];
-    if (old_overclock != status[72:71])
+    old_oc_method <= status[75];
+    if (old_overclock != status[72:71] || old_oc_method != status[75])
         oc_reset_cnt <= 20'hFFFFF;      // hold for ~50ms / 2 frames
     else if (|oc_reset_cnt)
         oc_reset_cnt <= oc_reset_cnt - 1'd1;
@@ -1052,7 +1055,8 @@ NES nes (
 	.SAVE_out_ena            (ss_req),           // one cycle high for each action
 	.SAVE_out_be             (ss_be),
 	.SAVE_out_done           (ss_ack),           // should be one cycle high when write is done or read value is valid
-	.overclock               (status[72:71])     
+	.overclock               (status[72:71]),
+	.oc_method               (status[75])
 );
 
 wire [24:0] cpu_addr;
