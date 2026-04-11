@@ -1,41 +1,91 @@
-# [Nintendo Entertainment System](https://en.wikipedia.org/wiki/Nintendo_Entertainment_System) for [MiSTer Platform](https://github.com/MiSTer-devel/Main_MiSTer/wiki)
+# [**Nintendo Entertainment System**](https://en.wikipedia.org/wiki/Nintendo_Entertainment_System) **for [MiSTer Platform](https://github.com/MiSTer-devel/Main_MiSTer/wiki)**
+
+**⚠️ Fork Notice:** Due to the experimental OC (Overclocking) feature, this is maintained as a separate fork due to instability. You may experience issues where reloading a ROM or numerous resets of the console are required to get the OC going. **Using savestates will also have issues.** Enjoy\! A huge thank you to the original NES\_MiSTer devs as well.
 
 This is an FPGA implementation of the NES/Famicom based on [FPGANES](https://github.com/strigeus/fpganes) by Ludvig Strigeus and ported to MiSTer.
 
-## Features
- * Supports saves for most games
- * Savestates
- * Supports NTSC, PAL, and Dendy system types
- * FDS Support with expansion audio
- * Multiple Palette options
- * Zapper, Powerpad, Microphone, and Miracle Piano support
- * Supports four players
- * Setting for increasing sprites per line by 8
- * Supports up to 32 cheat codes
- * Supports NSF Player
- * Supports expansion audio from mappers including VRC6 & 7, MMC5, Namco 163 and Sunsoft 5b
- * Supports many popular mappers including VRC1-7, MMC0-5, and many more (see below)
- * Supports large games such as Legend of Link and Rockman Minus Infinity
+## **Fork Features & Updates**
 
-## Installation
-Copy the NES_\*.rbf file to the directory or subdirectory of `/media/fat/`. Create a `games/NES/` directory on the root of the SD card (`/media/fat/games/NES/`), and place NES roms (\*.nes) inside this NES directory. The ROMs must have an iNES or NES2.0 header, which most already do. NES2.0 headers are preferred for the best accuracy. To have an NES or FDS game ROM load automatically upon starting the core, place it in the NES directory named as boot1.rom or boot2.rom, respectively.
+### **Postrender Overclock (OC) — Now the Default Mode**
+
+A new overclocking method that improves compatibility and stability across the NES library.
+
+* Applies overclocking after the PPU’s render phase.  
+* Avoids CPU/PPU timing conflicts, especially around $2002 reads.  
+* Reduces visual glitches and improves frame pacing.  
+* More stable than previous OC methods and enabled by default for better out‑of‑the‑box performance.  
+* **Note:** Some games like *Parodius* and *Castlevania III \[J\]* work better with **VBlank** overclocking rather than **Postrender**. **Postrender** works best with *Kirby's Adventure* and *Battletoads*. "Extreme" 100% mode is not recommended for most games. Medium (1.50x) is recommended for most.
+
+### **NES Overclocking 2.0 & VBlank Extension**
+
+* **VBlank Extension (up to 100% OC):** A CPU-only overclocking method that utilizes VBlank extension to increase CPU frequency by up to 100% while maintaining standard 60fps video and cycle-accurate audio. It uses a dedicated 1.78MHz mapper clock for proper cycle synchronization to preserve compatibility with complex mappers.  
+* **Medium (1.50×) Mode:** A stable intermediate performance boost using dynamic PPU clocking and anti-jitter logic. Ideal for games that don’t require full “Extreme” speed.  
+* **APU Pitch Correction:** Dynamically scales expansion audio. Ensures that mappers with internal sound hardware (like VRC6/VRC7) maintain their original pitch and timing during overclocked gameplay.
+
+### **High-Fidelity Stereo Audio Overhaul**
+
+True Stereo Sound implemented with high-quality separation (enable "Stereo Mix" in OSD):
+
+* **Left Channel:** Pulse 1, Triangle, and DMC.  
+* **Right Channel:** Pulse 2, Noise, and DMC.  
+* **Unified Mixing Logic:** Fixed "loud and clipping" audio in Mono mode by implementing a unified internal downmixing pipeline. Mono and Stereo now share the same gain structure and expansion audio balance.  
+* **Smooth Audio (Pure Triangle/Sawtooth):** An optional audio‑interpolation system that smooths the NES’s stepped triangle and sawtooth‑like waveforms. It reduces digital harshness, aliasing, and stair‑step artifacts—especially noticeable when overclocking—while preserving accurate pitch and timing.
+
+### **Epileptic‑Friendly Filter (Temporal Frame Blending)**
+
+A new optional accessibility feature designed to reduce rapid flashing sequences that may trigger discomfort or photosensitive reactions.
+
+* Uses temporal frame blending: 25% current frame \+ 75% previous frame.  
+* Maintains pixel‑accurate timing with no spatial shift.  
+* Smooths out multi‑frame flash patterns (e.g., *Zelda II* death screen).  
+* Fully optional and non‑intrusive, preserving NES authenticity.
+
+### **Mapper & Core Stability Improvements**
+
+* **VRC Mapper IRQ Pause:** Implemented a new mechanism to gate cycle-based IRQ counters during the extended VBlank periods used in overclocking. This resolves graphical tearing and split-screen shaking in *Castlevania III (Akumajou Densetsu)* and other VRC-based titles.  
+* **Sync Improvements:** Decoupled timing-sensitive mapper logic from the CPU clock to ensure stable IRQ firing regardless of the overclocking percentage.  
+* **Core Cleanup:** Systematic removal of legacy isolation\_mode logic to streamline signal routing and improve timing closure.
+
+## **Features**
+
+* Supports saves for most games  
+* Savestates *(Note: May have issues in this OC fork)*  
+* Supports NTSC, PAL, and Dendy system types  
+* FDS Support with expansion audio  
+* Multiple Palette options  
+* Zapper, Powerpad, Microphone, and Miracle Piano support  
+* Supports four players  
+* Setting for increasing sprites per line by 8  
+* Supports up to 32 cheat codes  
+* Supports NSF Player  
+* Supports expansion audio from mappers including VRC6 & 7, MMC5, Namco 163 and Sunsoft 5b  
+* Supports many popular mappers including VRC1-7, MMC0-5, and many more (see below)  
+* Supports large games such as Legend of Link and Rockman Minus Infinity
+
+## **Installation**
+
+Copy the NES_OC_\*.rbf file to the directory or subdirectory of `/media/fat/`. Create a `games/NES/` directory on the root of the SD card (`/media/fat/games/NES/`), and place NES roms (\*.nes) inside this NES directory. The ROMs must have an iNES or NES2.0 header, which most already do. NES2.0 headers are preferred for the best accuracy. To have an NES or FDS game ROM load automatically upon starting the core, place it in the NES directory named as boot1.rom or boot2.rom, respectively.
+
 - `boot0.rom` = FDS BIOS file.  Will be used for any FDS images loaded
 - `boot1.rom` = NES Cart file.  Can be used with boot0.rom (BIOS) in place
 - `boot2.rom` = FDS image file.  Requires boot0.rom (BIOS).  Use a blank FDS (header only) to boot the FDS BIOS without a disk image.
 - `boot3.rom` = PAL file. It can be used to set your default custom palette. Save the menu option on "Custom" to apply immediately.
 
-## Famicom Disk System Usage
-Before loading \*.FDS files, you must first load the official, unpatched FDS BIOS. The BIOS file should be renamed to boot0.rom and placed in the same folder as the ROMs (NES).  Alternatively, it can be loaded from the OSD if boot0.rom doesn't exist. After loading the core and the bios you may select an FDS image. By default, the NES core will swap disk sides for you automatically. To suppress this behavior, hold the FDS button on the player 1 controller. The "Disk Swap" OSD option manually controls the disk side.  Each button press increments the disk side.  Press and hold the fds button to eject and increment the disk side in this mode.  Some games only work correctly in manual disk swap mode, and require holding the FDS button for up to a few seconds (Gall Force,...).
+## **Famicom Disk System Usage**
 
-## Extra Sprites
+Before loading \*.FDS files, you must first load the official, unpatched FDS BIOS. The BIOS file should be renamed to boot0.rom and placed in the same folder as the ROMs (NES). Alternatively, it can be loaded from the OSD if boot0.rom doesn't exist. After loading the core and the bios you may select an FDS image. By default, the NES core will swap disk sides for you automatically. To suppress this behavior, hold the FDS button on the player 1 controller. The "Disk Swap" OSD option manually controls the disk side. Each button press increments the disk side. Press and hold the fds button to eject and increment the disk side in this mode. Some games only work correctly in manual disk swap mode, and require holding the FDS button for up to a few seconds (Gall Force,...).
+
+## **Extra Sprites**
+
 This feature will double the number of sprites drawn per scanlines, decreasing the flickering sprites that NES is known for. Some games relied on the 8 sprite behavior to work correctly, such as Simon's Quest swamps. Other mappers may be impacted by using extra sprites. While it works well in most games, glitches may occur with this enabled.
 
-## Saving and Loading
+## **Saving and Loading**
+
 The battery backed RAM (Save RAM) for the NES does not write to disk automatically. After saving in your game, you must then write the RAM to the SD card by selecting **Save Backup RAM** from the menu. If you do not save your RAM to disk, the contents will be lost next time you restart the core or switch games. Alternatively you can enable to Autosave option from the OSD menu, and if you do your games will be recorded to disk every time you open the OSD menu. FDS saving uses the same method as for cartridge RAM saves. Save RAM is stored as a .sav file based on the NES/FDS filename in `/media/fat/saves/NES/`.  Examples:  
 `Metroid (Japan) (Rev 3).fds` -> `Metroid (Japan) (Rev 3).sav`  
 `Legend of Zelda, The (USA) (Rev 1).nes` -> `Legend of Zelda, The (USA) (Rev 1).sav`
 
-## Savestates
+## **Savestates**
 Core provides 4 slots to save and restore the state.
 Those can be saved to SD Card or reside only in memory for temporary use (OSD Option). 
 Usage with either Keyboard, Gamepad mappable button, or OSD. Save states are stored as .ss files in `/media/fat/savestates/NES/`, with an underscore and the save slot number (1,2,3,4) preceding `.ss`. Example (save slot 1): `Metroid (USA).nes` -> `Metroid (USA)_1.ss`
@@ -49,11 +99,13 @@ Gamepad:
 - <kbd>SAVESTATEBUTTON</kbd>+<kbd>START</kbd>+<kbd>DOWN</kbd> saves to the selected slot
 - <kbd>SAVESTATEBUTTON</kbd>+<kbd>START</kbd>+<kbd>UP</kbd> loads from the selected slot
 
-## Zapper Support
+## **Zapper Support**
+
 The "Zapper" (aka Light Gun) can be used via two methods. You can select Peripheral: Zapper(Mouse) to use your mouse to aim and shoot with the left button. This mode uses relative mouse motion, so devices that rely on absolute coordinates will not work via this method. Alternatively, you can choose Zapper(Joy) to use the Analog stick to aim, and the defined Trigger button to fire. Guns such as Aimtrak have joystick modes which may be compatible with this method.
 
-## Miracle Piano Support
-The Miracle Piano is a MIDI keyboard compatible with the Miracle Piano Education System cart.  To use it with SNAC, no further settings are needed.  To use it with midilink, in the System Settings, set the UART connection to use MIDI.  The piano will then be connected on controller port 1 as expected.  The primary controller will automatically be assigned to port 2 as the cart expects.  The header for the ROM file should be set to NES 2.0 with controller type (0xF) set to the Miracle Piano (0x19).
+## **Miracle Piano Support**
+
+The Miracle Piano is a MIDI keyboard compatible with the Miracle Piano Education System cart. To use it with SNAC, no further settings are needed. To use it with midilink, in the System Settings, set the UART connection to use MIDI. The piano will then be connected on controller port 1 as expected. The primary controller will automatically be assigned to port 2 as the cart expects. The header for the ROM file should be set to NES 2.0 with controller type (0xF) set to the Miracle Piano (0x19).
 
 ## Supported Mappers
 
