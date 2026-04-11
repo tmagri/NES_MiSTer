@@ -202,7 +202,6 @@ module ClockGen #(parameter USE_SAVESTATE = 0) (
 reg is_even_frame = 0; // 1 indicates even frame.
 assign evenframe = is_even_frame;
 
-// Dendy is 291 to 310
 wire [9:0] vblank_start_sl;
 wire [9:0] vblank_end_sl;
 wire [9:0] vblank_end_status_sl;
@@ -1274,6 +1273,7 @@ module PPU(
 	input  [1:0]  mask,
 	input  [9:0]  extra_lines,  // OC: extra blank scanlines (0 = normal)
 	input         oc_method,
+
 	output        render_ena_out,
 	output        evenframe,
 	// savestates
@@ -1377,7 +1377,7 @@ wire clear_signal = is_pre_render_line;
 // Overclocking can cause the CPU to poll Sprite 0 before VBlank even ends.
 // Clearing the flag at the start of the post-render line (240) ensures
 // the CPU sees '0' and correctly waits for the next frame's Sprite 0 hit.
-wire clear_flags = clear_signal || (scanline == 240 && cycle == 0 && |extra_lines && !oc_method);
+wire clear_flags = clear_signal || (scanline == 240 && cycle == 0 && |extra_lines);
 
 wire [13:0] vram_a;
 reg [7:0] vram_a_byte;
@@ -1748,11 +1748,11 @@ end
 
 reg [5:0] color_pipe[4];
 wire [5:0] color2;
+
 wire pal_writes_valid = is_pal_address && ~is_rendering;
 // On a real system if master_mode is set the ext pins would also be used for palette address, but
 // we dont have those here.
 wire [4:0] pram_addr = is_rendering && in_visible_frame ? pixel : (pal_writes_valid ? vram[4:0] : 5'b00000);
-
 wire in_rendering_frame = scanline < 240 || is_pre_render_line;
 
 PaletteRam palette_ram(
@@ -1816,8 +1816,23 @@ wire clear_nmi = (clear_signal | (read && ain == 2));
 wire set_nmi = entering_vblank & ~clear_nmi;
 
 // --- Protect $2002 polling during Overclocking ---
-wire oc_active = (|extra_lines); // True if Vblank extension padding is active
-wire safe_nmi_read = nmi_occured | (oc_active & entering_vblank);
+wire oc_active = (|extra_lines);
+reg oc_vblank_race;
+
+always @(posedge clk) begin
+	if (reset) oc_vblank_race <= 1'b0;
+	else if (ce) begin
+		if (~read || ain != 2) 
+			oc_vblank_race <= 1'b0;
+		else if (entering_vblank) 
+			oc_vblank_race <= 1'b1;
+	end
+end
+
+// If OC is active, guarantee a '1' is read if the CPU collides with the exact start of VBLANK
+wire safe_nmi_read = nmi_occured | (oc_active & (entering_vblank | oc_vblank_race));
+
+
 
 // Modified PPU bus read
 wire [7:0] ppu_dbus =
@@ -1829,7 +1844,7 @@ wire [7:0] ppu_dbus =
 		latched_dout) :
 	latched_dout;
 
-assign emphasis = {write_2001 ? ppu_dbus[7] : emph_reg[2], emph_reg[1], emph_reg[0]}; // behavior of 2c07 is unknown so oh well.
+assign emphasis = {write_2001 ? ppu_dbus[7] : emph_reg[2], emph_reg[1], emph_reg[0]};
 
 assign SS_PPU_BACK[    1] = obj_patt;
 assign SS_PPU_BACK[    2] = bg_patt;

@@ -240,7 +240,7 @@ parameter CONF_STR = {
 	"d7rB,Restore state(F1-F4);",
 	"-;",
 	"O[72:71],CPU Overclock,Off,Turbo (1.33x),Medium (1.50x),Extreme (2.00x);",
-	"O[75],OC Method,VBlank,Postrender;",
+	"O[75],OC Method,Postrender,VBlank;",
 	"-;",
 	"P1,Audio & Video;",
 	"P1-;",
@@ -256,6 +256,7 @@ parameter CONF_STR = {
 	"P1ORS,Mask Edges,Off,Left,Both,Auto;",
 	"P1OP,Extra Sprites,Off,On;",
 	"P1-;",
+	"P1O[76],Epileptic-Friendly Filter,Off,On;",
 	"P1OUV,Audio Enable,Both,Internal,Cart Expansion,None;",
 	"P1O[74],Stereo,Off,On;",
 	"P1O[73],Smooth Audio,Off,On;",
@@ -1056,7 +1057,7 @@ NES nes (
 	.SAVE_out_be             (ss_be),
 	.SAVE_out_done           (ss_ack),           // should be one cycle high when write is done or read value is valid
 	.overclock               (status[72:71]),
-	.oc_method               (status[75])
+	.oc_method               (~status[75])
 );
 
 wire [24:0] cpu_addr;
@@ -1295,7 +1296,8 @@ video video
 	.load_color_index(pal_index),
 	.emphasis(emphasis),
 	.reticle(~status[22] ? reticle : 2'b00),
-	.pal_video(pal_video)
+	.pal_video(pal_video),
+	.anti_epilepsy_en(status[76])
 );
 
 video_mixer #(260, 0, 1) video_mixer
