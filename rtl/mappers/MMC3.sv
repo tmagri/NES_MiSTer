@@ -416,7 +416,16 @@ wire mapper268_5k = (flags[24:21] == 1);
 wire mapper45 = (flags[7:0] == 45);    // Super 1000000-in-1 multicart
 wire mapper52 = (flags[7:0] == 52);    // Mario Party 7-in-1 multicart
 wire mapper552 = ({flags[18:17], flags[7:0]} == 552); // Taito X1-017 "Corrected"
-wire oversized = mapper268 || mapper45 || mapper52 || (flags[10:9] == 3); // If prg size in header is >= 1MB (prg_size==6 or 7) must be some way to access it. Allow oversize mmc3
+wire mapper44 = (flags[7:0] == 44);     // Super HiK 7-in-1 MMC3 multicart
+wire mapper49 = (flags[7:0] == 49);     // Super HiK 4-in-1 MMC3 multicart
+wire mapper134 = (flags[7:0] == 134);   // Simple PRG/CHR outer bank extension
+wire mapper249 = (flags[7:0] == 249);   // Waixing bit-scramble copy protection
+wire mapper250 = (flags[7:0] == 250);   // Time Diver Avenger addr/data swap
+wire mapper182 = (flags[7:0] == 182);   // Address remap MMC3 variant
+wire mapper245 = (flags[7:0] == 245);   // Waixing CHR reg0 bit1 as PRG outer
+wire mapper224 = (flags[7:0] == 224);   // Jncota KT-008 PRG outer bank at $5000
+wire mapper197 = (flags[7:0] == 197);   // 4KB+2KB CHR granularity variant
+wire oversized = mapper268 || mapper45 || mapper52 || mapper44 || mapper245 || mapper224 || (flags[10:9] == 3); // If prg size in header is >= 1MB (prg_size==6 or 7) must be some way to access it. Allow oversize mmc3
 wire gnrom;
 wire lockout;
 wire gnrom_lock;
@@ -427,6 +436,13 @@ wire four_screen_mirroring = flags[16];// | DxROM; // not all DxROM are 4-screen
 reg mapper47_multicart;
 reg [2:0] mapper37_multicart;
 reg [3:0] mapper189_prgsel;
+reg [2:0] m44_block;              // Mapper 44 block select (0-6)
+reg [1:0] m49_block;              // Mapper 49 block select
+reg [1:0] m49_prg_reg;            // Mapper 49 NROM PRG register
+reg m49_prg_mode;                 // Mapper 49 PRG mode (0=NROM, 1=MMC3)
+reg [7:0] m134_reg;               // Mapper 134 outer bank register
+reg [7:0] m249_reg;               // Mapper 249 scramble control register
+reg m224_outer;                   // Mapper 224 outer PRG bank bit
 wire [7:0] new_counter = (counter == 0 || irq_reload) ? irq_latch : counter - 1'd1;
 reg [3:0] a12_ctr;
 wire irq_support = !DxROM && !mapper33 && !mapper95 && !mapper88 && !mapper154 && !mapper76
@@ -435,7 +451,40 @@ wire prg_invert_support = (irq_support && !mapper48);
 wire chr_invert_support = (irq_support && !mapper48) || mapper82 || mapper552;
 wire regs_7e = mapper80 || mapper82 || mapper207 || mapper552;
 wire internal_128 = mapper80 || mapper207 || mapper552;
-wire prg_reg_odd = (~mapper196) ? prg_ain[0] : ( |prg_ain[3:2] | (prg_ain[1] & ~prg_ain[14]) );
+wire prg_reg_odd = mapper250 ? prg_ain[10] : (~mapper196) ? prg_ain[0] : ( |prg_ain[3:2] | (prg_ain[1] & ~prg_ain[14]) );
+wire [7:0] eff_din = mapper250 ? prg_ain[7:0] : prg_din; // Mapper 250 uses address low byte as data
+
+// Mapper 182: address remap + bank_select permutation
+// $8001->mirroring($A000), $A000->bank_select($8000, permuted), $C000->bank_data($8001), $C001->IRQ latch+reload, rest same
+reg [2:0] m182_eff_addr;
+reg [7:0] m182_eff_din;
+always @* begin
+	m182_eff_addr = {prg_ain[14:13], prg_reg_odd};
+	m182_eff_din = eff_din;
+	if (mapper182) begin
+		case ({prg_ain[14:13], prg_ain[0]})
+			3'b00_1: begin m182_eff_addr = 3'b01_0; m182_eff_din = prg_din; end // $8001 -> mirroring
+			3'b01_0: begin // $A000 -> bank_select with permuted low 3 bits
+				m182_eff_addr = 3'b00_0;
+				case (prg_din[2:0])
+					3'd0: m182_eff_din = {prg_din[7:3], 3'd0};
+					3'd1: m182_eff_din = {prg_din[7:3], 3'd3};
+					3'd2: m182_eff_din = {prg_din[7:3], 3'd1};
+					3'd3: m182_eff_din = {prg_din[7:3], 3'd5};
+					3'd4: m182_eff_din = {prg_din[7:3], 3'd6};
+					3'd5: m182_eff_din = {prg_din[7:3], 3'd7};
+					3'd6: m182_eff_din = {prg_din[7:3], 3'd2};
+					3'd7: m182_eff_din = {prg_din[7:3], 3'd4};
+				endcase
+			end
+			3'b10_0: begin m182_eff_addr = 3'b00_1; m182_eff_din = prg_din; end // $C000 -> bank_data
+			3'b10_1: begin m182_eff_addr = 3'b10_0; m182_eff_din = prg_din; end // $C001 -> IRQ latch (first half)
+			3'b11_0: begin m182_eff_addr = 3'b11_0; m182_eff_din = prg_din; end // $E000 -> IRQ disable
+			3'b11_1: begin m182_eff_addr = 3'b11_1; m182_eff_din = prg_din; end // $E001 -> IRQ enable
+			default: begin m182_eff_addr = {prg_ain[14:13], prg_ain[0]}; m182_eff_din = prg_din; end
+		endcase
+	end
+end
 wire [3:0] prota = (m268_reg[4][6] ^ m268_reg[4][3]) ? {m268_reg[4][1:0],m268_reg[4][4],m268_reg[4][7]} : 4'hF; // m208 4'hF = 0x59
 wire [3:0] prot = (m268_reg[4][3]) ? ~prota : prota;
 
@@ -462,6 +511,13 @@ if (~enable) begin
 	{m45_reg[0],m45_reg[1],m45_reg[2],m45_reg[3]} <= {8'h00, 8'h00, 8'h0F, 8'h00}; // reg[2]=0x0F per NRS
 	m45_index <= 0;
 	m52_reg <= 0;
+	m44_block <= 0;
+	m49_block <= 0;
+	m49_prg_reg <= 0;
+	m49_prg_mode <= 0;
+	m134_reg <= 0;
+	m249_reg <= 0;
+	m224_outer <= 0;
 end else if (SaveStateBus_load) begin
 	irq_reg            <= SS_MAP1[ 6: 0];
 	bank_select        <= SS_MAP1[ 9: 7];
@@ -502,27 +558,34 @@ end else if (SaveStateBus_load) begin
 	m268_reg[5]        <= SS_MAP3[47:40];
 	chr_bank_0_0       <= SS_MAP1[   48];
 	chr_bank_1_0       <= SS_MAP1[   49];
+	m44_block          <= SS_MAP3[52:50];
+	m49_block          <= SS_MAP3[54:53];
+	m49_prg_reg        <= SS_MAP3[56:55];
+	m49_prg_mode       <= SS_MAP3[   57];
+	m134_reg           <= {2'b0, SS_MAP3[59], 3'b0, SS_MAP3[58], 1'b0};
+	m249_reg           <= {6'b0, SS_MAP3[60], 1'b0};
+	m224_outer         <= SS_MAP3[61];
 end else begin
 	if (ce) begin // M2
 		if (!regs_7e && prg_write && prg_ain[15]) begin
 			if (!mapper33 && !mapper48 && !mapper112) begin
-				casez({prg_ain[14:13], prg_reg_odd})
-					3'b00_0: {chr_a12_invert, prg_rom_bank_mode, ram6_enabled, bank_select} <= {prg_din[7:5], prg_din[2:0]}; // Bank select ($8000-$9FFE, even)
+				casez(mapper182 ? m182_eff_addr : {prg_ain[14:13], prg_reg_odd})
+					3'b00_0: {chr_a12_invert, prg_rom_bank_mode, ram6_enabled, bank_select} <= {(mapper182 ? m182_eff_din[7:5] : eff_din[7:5]), (mapper182 ? m182_eff_din[2:0] : eff_din[2:0])}; // Bank select ($8000-$9FFE, even)
 					3'b00_1: begin // Bank data ($8001-$9FFF, odd)
 						case (bank_select)
-							0: {chr_bank_0,chr_bank_0_0} <= {1'b0,prg_din};  // Select 2 KB CHR bank at PPU $0000-$07FF (or $1000-$17FF);
-							1: {chr_bank_1,chr_bank_1_0} <= {1'b0,prg_din};  // Select 2 KB CHR bank at PPU $0800-$0FFF (or $1800-$1FFF);
-							2: chr_bank_2 <= prg_din;       // Select 1 KB CHR bank at PPU $1000-$13FF (or $0000-$03FF);
-							3: chr_bank_3 <= prg_din;       // Select 1 KB CHR bank at PPU $1400-$17FF (or $0400-$07FF);
-							4: chr_bank_4 <= prg_din;       // Select 1 KB CHR bank at PPU $1800-$1BFF (or $0800-$0BFF);
-							5: chr_bank_5 <= prg_din;       // Select 1 KB CHR bank at PPU $1C00-$1FFF (or $0C00-$0FFF);
-							6: prg_bank_0 <= prg_din;       // Select 8 KB PRG ROM bank at $8000-$9FFF (or $C000-$DFFF);
-							7: prg_bank_1 <= prg_din;       // Select 8 KB PRG ROM bank at $A000-$BFFF
+							0: {chr_bank_0,chr_bank_0_0} <= {1'b0, mapper182 ? m182_eff_din : eff_din};
+							1: {chr_bank_1,chr_bank_1_0} <= {1'b0, mapper182 ? m182_eff_din : eff_din};
+							2: chr_bank_2 <= mapper182 ? m182_eff_din : eff_din;
+							3: chr_bank_3 <= mapper182 ? m182_eff_din : eff_din;
+							4: chr_bank_4 <= mapper182 ? m182_eff_din : eff_din;
+							5: chr_bank_5 <= mapper182 ? m182_eff_din : eff_din;
+							6: prg_bank_0 <= mapper182 ? m182_eff_din : eff_din;
+							7: prg_bank_1 <= mapper182 ? m182_eff_din : eff_din;
 						endcase
 					end
-					3'b01_0: if (!mapper208) mirroring <= !prg_din[0];  // Mirroring ($A000-$BFFE, even)
-					3'b01_1: {ram_enable, ram_protect, ram6_enable, ram6_protect} <= {{4{prg_din[7]}},{4{prg_din[6]}}, prg_din[5:4]}; // PRG RAM protect ($A001-$BFFF, odd)
-					3'b10_0: irq_latch <= prg_din;                      // IRQ latch ($C000-$DFFE, even)
+					3'b01_0: if (!mapper208) mirroring <= mapper182 ? !m182_eff_din[0] : !eff_din[0];  // Mirroring ($A000-$BFFE, even)
+					3'b01_1: {ram_enable, ram_protect, ram6_enable, ram6_protect} <= {{4{eff_din[7]}},{4{eff_din[6]}}, eff_din[5:4]}; // PRG RAM protect ($A001-$BFFF, odd)
+					3'b10_0: begin irq_latch <= mapper182 ? m182_eff_din : eff_din; if (mapper182) irq_reload <= 1; end // IRQ latch ($C000-$DFFE, even); mapper182 also reloads
 					3'b10_1: irq_reload <= 1;                           // IRQ reload ($C001-$DFFF, odd)
 					3'b11_0: {irq_enable, irq_reg[0]} <= 2'b00;         // IRQ disable ($E000-$FFFE, even)
 					3'b11_1: irq_enable <= 1;                           // IRQ enable ($E001-$FFFF, odd)
@@ -662,6 +725,33 @@ end else begin
 		if (prg_write && prg_ain[15:13] == 3'b011 && mapper52 && !m52_locked) begin
 			m52_reg <= prg_din;
 		end
+
+		// Mapper 44: $A001 write sets block select (0-6, 7 maps to 6)
+		if (prg_write && prg_ain[15] && {prg_ain[14:13], prg_reg_odd} == 3'b01_1 && mapper44) begin
+			m44_block <= (eff_din[2:0] == 3'd7) ? 3'd6 : eff_din[2:0];
+		end
+
+		// Mapper 49: Write to $6000-$7FFF sets block/PRG mode
+		if (prg_write && prg_ain[15:13] == 3'b011 && mapper49) begin
+			m49_block <= prg_din[7:6];
+			m49_prg_reg <= prg_din[5:4];
+			m49_prg_mode <= prg_din[0];
+		end
+
+		// Mapper 134: Write to $6001 sets outer bank register
+		if (prg_write && prg_ain[15:0] == 16'h6001 && mapper134) begin
+			m134_reg <= prg_din;
+		end
+
+		// Mapper 249: Write to $5000 sets scramble control
+		if (prg_write && prg_ain[15:0] == 16'h5000 && mapper249) begin
+			m249_reg <= prg_din;
+		end
+
+		// Mapper 224: Write to $5000 sets PRG outer bank (bit 2 of data)
+		if (prg_write && prg_ain[15:0] == 16'h5000 && mapper224) begin
+			m224_outer <= prg_din[2];
+		end
 	end
 
 	if (m2_inv) begin // Inverted M2
@@ -746,11 +836,21 @@ assign SS_MAP3_BACK[39:32] = m268_reg[4];
 assign SS_MAP3_BACK[47:40] = m268_reg[5];
 assign SS_MAP3_BACK[   48] = chr_bank_0_0;
 assign SS_MAP3_BACK[   49] = chr_bank_1_0;
-assign SS_MAP3_BACK[63:50] = 14'b0; // free to be used
+assign SS_MAP3_BACK[52:50] = m44_block;
+assign SS_MAP3_BACK[54:53] = m49_block;
+assign SS_MAP3_BACK[56:55] = m49_prg_reg;
+assign SS_MAP3_BACK[   57] = m49_prg_mode;
+assign SS_MAP3_BACK[   58] = m134_reg[1];
+assign SS_MAP3_BACK[   59] = m134_reg[5];
+assign SS_MAP3_BACK[   60] = m249_reg[1];
+assign SS_MAP3_BACK[   61] = m224_outer;
+assign SS_MAP3_BACK[63:62] = 2'b0; // free to be used
 
 // The PRG bank to load. Each increment here is 8kb. So valid values are 0..63.
 reg [7:0] prgsel;
+reg [7:0] m249_prg_tmp; // Mapper 249 scratch for PRG scramble
 always @* begin
+	m249_prg_tmp = 8'h00;
 	casez({prg_ain[14:13], prg_rom_bank_mode && prg_invert_support})
 		3'b00_0: prgsel = prg_bank_0;  // $8000 mode 0
 		3'b00_1: prgsel = prg_bank_2;  // $8000 fixed to second last bank
@@ -772,6 +872,29 @@ always @* begin
 	if (mapper205) prgsel[7:4] = {2'b00, mapper37_multicart[1], mapper37_multicart[0] | (prgsel[4] & !mapper37_multicart[1])};
 
 	if (mapper189 || mapper208) prgsel = {2'b00,mapper189_prgsel,prg_ain[14:13]};
+	if (mapper134) prgsel = (prgsel & 8'h1F) | {2'b0, m134_reg[1], 5'b0};
+	if (mapper44) begin
+		if (m44_block <= 3'd5)
+			prgsel = (prgsel & 8'h0F) | {1'b0, m44_block, 4'b0};
+		else
+			prgsel = (prgsel & 8'h1F) | {1'b0, m44_block, 4'b0};
+	end
+	if (mapper49) begin
+		if (m49_prg_mode)
+			prgsel = (prgsel & 8'h0F) | {2'b0, m49_block, 4'b0};
+		else
+			prgsel = {4'b0, m49_prg_reg, prg_ain[14:13]};
+	end
+	if (mapper245) prgsel = (prgsel & 8'h3F) | {1'b0, chr_bank_0[1], 6'b0};
+	if (mapper224) prgsel = (prgsel & 8'h3F) | {1'b0, m224_outer, 6'b0};
+	if (mapper249 && m249_reg[1]) begin
+		if (prgsel < 8'h20) // page < 0x20: {0,0,0, p[2], p[1], p[3], p[4], p[0]}
+			prgsel = {3'b0, prgsel[2], prgsel[1], prgsel[3], prgsel[4], prgsel[0]};
+		else begin // page >= 0x20: subtract 0x20 then CHR-style scramble
+			m249_prg_tmp = prgsel - 8'h20;
+			prgsel = {m249_prg_tmp[5:4], m249_prg_tmp[2], m249_prg_tmp[6], m249_prg_tmp[7], m249_prg_tmp[3], m249_prg_tmp[1:0]};
+		end
+	end
 	if (!oversized) prgsel[7:6] = 2'b00;
 end
 
@@ -793,6 +916,25 @@ always @* begin
 		if (mapper37) chrsel[7] = mapper37_multicart[2];
 		if (mapper205) chrsel[8:7] = {mapper37_multicart[1], mapper37_multicart[0] | (chrsel[7] & !mapper37_multicart[1])};
 		if ((mapper88) || (mapper154)) chrsel[6] = chr_ain[12];
+		if (mapper134) chrsel[8] = m134_reg[5];
+		if (mapper49) chrsel = (chrsel & 9'h07F) | {m49_block, 7'b0};
+		if (mapper245) chrsel = {6'b0, use_chr_ain_12, chr_ain[11:10]};
+		if (mapper197) begin
+			if (!use_chr_ain_12) // 4KB bank: R0 (chrMode0) or R2 (chrMode1)
+				chrsel = chr_a12_invert
+					? ({chr_bank_2, 1'b0} + {7'd0, chr_ain[11:10]})
+					: ({chr_bank_0[6:0], chr_bank_0_0, 1'b0} + {7'd0, chr_ain[11:10]});
+			else if (!chr_ain[11]) // First 2KB bank: R2 (chrMode0) or R0 (chrMode1)
+				chrsel = chr_a12_invert
+					? {chr_bank_0[6:0], chr_bank_0_0, chr_ain[10]}
+					: {chr_bank_2, chr_ain[10]};
+			else // Second 2KB bank: R3 (chrMode0) or R0 (chrMode1)
+				chrsel = chr_a12_invert
+					? {chr_bank_0[6:0], chr_bank_0_0, chr_ain[10]}
+					: {chr_bank_3, chr_ain[10]};
+		end
+		if (mapper249 && m249_reg[1])
+			chrsel = {1'b0, chrsel[5:4], chrsel[2], chrsel[6], chrsel[7], chrsel[3], chrsel[1:0]};
 	end else begin
 		case(chr_ain[12:11])
 			2'b00: chrsel = {chr_bank_2, chr_ain[10]};
@@ -862,6 +1004,11 @@ wire [9:0] m52_chr_or = m52_reg[6] ? {m52_reg[5], m52_reg[2], m52_reg[4], 7'b000
 wire [7:0] m52_prg_final = (prgsel[4:0] & m52_prg_and) | m52_prg_or;
 wire [9:0] m52_chr_final = (chrsel[7:0] & m52_chr_and) | m52_chr_or;
 
+// Mapper 44 outer bank address calculation
+// PRG: (prgsel & mask) | (block * 16), blocks 0-5 use 4-bit mask, block 6 uses 5-bit mask
+// CHR: (chrsel & mask) | (block * 128), blocks 0-5 use 7-bit mask, block 6 uses 8-bit mask
+wire [9:0] m44_chr_final = (chrsel[7:0] & (m44_block <= 3'd5 ? 8'h7F : 8'hFF)) | {m44_block, 7'b0};
+
 wire [21:0] prg_aout_tmp = {1'b0, mapper268 ? map268p[20:13] : mapper45 ? m45_prg_final : mapper52 ? m52_prg_final : prgsel, prg_ain[12:0]};
 
 wire ram_enable_a = !MMC6 ? (ram_enable[prg_ain[12:11]])
@@ -891,10 +1038,12 @@ assign chr_aout =
 		(mapper194 & chr_ram_cs)             ? {11'b11_1111_1111_1,chrsel[0],   chr_ain[9:0]} :   // 2kb CHR-RAM
 		(mapper195 & chr_ram_cs)             ? {10'b11_1111_1111,  chrsel[1:0], chr_ain[9:0]} :   // 4kb CHR-RAM
 		(m268_chr_ram)                       ? {11'b11_1111_1111_1,            chr_ain[10:0]} :   // 2kb CHR-RAM
+		(mapper245)                          ? {9'b11_1111_111,    chrsel[2:0], chr_ain[9:0]} :   // mapper245 8kb CHR-RAM
 		(mapper268)                          ? {4'b10_00,              map268c, chr_ain[9:0]} :   // Mapper 268 override
 		(mapper45 & flags[15])               ? {9'b11_1111_111, chr_ain[12:0]} : // Mapper 45 unbanked 8KB CHR-RAM
 		(mapper45)                           ? {2'b10, m45_reg[2][5:4], m45_chr_final, chr_ain[9:0]} : // Mapper 45 CHR-ROM
 		(mapper52)                           ? {2'b10,         m52_chr_final, chr_ain[9:0]} : // Mapper 52 CHR override
+		(mapper44)                           ? {2'b10,         m44_chr_final, chr_ain[9:0]} : // Mapper 44 CHR override
 		                                       {3'b10_0,                chrsel, chr_ain[9:0]};    // Standard MMC3 CHR-ROM/RAM
 
 wire ram_a13 = mapper268 && m268_reg[3][5] && (prg_ain[15:12] == 4'h5);
