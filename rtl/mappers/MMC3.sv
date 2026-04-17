@@ -435,7 +435,8 @@ wire mapper238 = (flags[7:0] == 238);   // Security LUT protection
 wire mapper187 = (flags[7:0] == 187);   // Extended PRG override + CHR bit 8 + protection
 wire mapper123 = (flags[7:0] == 123);   // H2288 scrambled bank_select + NROM
 wire mapper215 = (flags[7:0] == 215);   // UNL-8237 LUT address/data remap + outer banks
-wire oversized = mapper268 || mapper45 || mapper52 || mapper44 || mapper245 || mapper224 || mapper12 || mapper115 || mapper198 || mapper199 || mapper215 || mapper187 || (flags[10:9] == 3); // If prg size in header is >= 1MB (prg_size==6 or 7) must be some way to access it. Allow oversize mmc3
+wire mapper217 = (flags[7:0] == 217);   // Pirate multicart LUT remap + outer banks
+wire oversized = mapper268 || mapper45 || mapper52 || mapper44 || mapper245 || mapper224 || mapper12 || mapper115 || mapper198 || mapper199 || mapper215 || mapper187 || mapper217 || (flags[10:9] == 3); // If prg size in header is >= 1MB (prg_size==6 or 7) must be some way to access it. Allow oversize mmc3
 wire gnrom;
 wire lockout;
 wire gnrom_lock;
@@ -467,6 +468,7 @@ reg [7:0] m187_exreg;             // Mapper 187 PRG/CHR mode register
 reg       m187_gate;              // Mapper 187 write gate for $8001
 reg [7:0] m123_exreg[0:1];       // Mapper 123 NROM override registers
 reg [7:0] m215_exreg[0:2];       // Mapper 215 extended registers
+reg [7:0] m217_exreg[0:3];       // Mapper 217 extended registers (exreg[3] is 1-bit gate)
 wire [7:0] new_counter = (counter == 0 || irq_reload) ? irq_latch : counter - 1'd1;
 reg [3:0] a12_ctr;
 wire irq_support = !DxROM && !mapper33 && !mapper95 && !mapper88 && !mapper154 && !mapper76
@@ -670,10 +672,57 @@ always @* begin
 end
 wire [7:0] m215_eff_din = (m215_addr_remap == 3'd0) ? {prg_din[7:3], m215_reg_remap} : prg_din;
 
+// Mapper 217: bank_select register index remap LUT {0,6,3,7,5,2,4,1}
+reg [2:0] m217_bank_lut;
+always @* case (prg_din[2:0])
+	3'd0: m217_bank_lut = 3'd0;
+	3'd1: m217_bank_lut = 3'd6;
+	3'd2: m217_bank_lut = 3'd3;
+	3'd3: m217_bank_lut = 3'd7;
+	3'd4: m217_bank_lut = 3'd5;
+	3'd5: m217_bank_lut = 3'd2;
+	3'd6: m217_bank_lut = 3'd4;
+	3'd7: m217_bank_lut = 3'd1;
+endcase
+
+// Mapper 217: address/data remap with gate logic
+reg [2:0] m217_eff_addr;
+reg [7:0] m217_eff_din;
+reg m217_eff_valid;
+always @* begin
+	m217_eff_addr = {prg_ain[14:13], prg_reg_odd};
+	m217_eff_din = prg_din;
+	m217_eff_valid = 1'b1;
+	if (mapper217 && prg_ain[15]) begin
+		if (m217_exreg[2]) begin
+			case ({prg_ain[14:13], prg_reg_odd})
+				3'b00_0: begin // $8000 → IRQ latch ($C000)
+					m217_eff_addr = 3'b10_0;
+				end
+				3'b00_1: begin // $8001 → bank_select ($8000) with LUT
+					m217_eff_addr = 3'b00_0;
+					m217_eff_din = {prg_din[7:3], m217_bank_lut};
+				end
+				3'b01_0: begin // $A000 → gated bank_data ($8001)
+					if (m217_exreg[3][0] && (!m217_exreg[0][7] || bank_select < 3'd6))
+						m217_eff_addr = 3'b00_1;
+					else
+						m217_eff_valid = 1'b0;
+				end
+				3'b01_1: begin // $A001 → mirroring ($A000)
+					m217_eff_addr = 3'b01_0;
+				end
+				default: ; // $C000-$FFFF pass through
+			endcase
+		end
+		// When exreg[2]==0, identity mapping (standard MMC3)
+	end
+end
+
 // Unified effective address/data/valid mux for mappers with register remapping
-wire [2:0] mmc3_eff_addr = mapper182 ? m182_eff_addr : mapper114 ? m114_eff_addr : mapper263 ? m263_eff_addr : mapper215 ? m215_addr_remap : {prg_ain[14:13], prg_reg_odd};
-wire [7:0] mmc3_eff_din  = mapper182 ? m182_eff_din  : mapper114 ? m114_eff_din  : mapper263 ? m263_din      : mapper215 ? m215_eff_din : (mapper123 && {prg_ain[14:13], prg_reg_odd} == 3'b000) ? {prg_din[7:3], m123_bank_lut} : eff_din;
-wire       mmc3_eff_valid = mapper114 ? m114_eff_valid : 1'b1;
+wire [2:0] mmc3_eff_addr = mapper182 ? m182_eff_addr : mapper114 ? m114_eff_addr : mapper263 ? m263_eff_addr : mapper215 ? m215_addr_remap : mapper217 ? m217_eff_addr : {prg_ain[14:13], prg_reg_odd};
+wire [7:0] mmc3_eff_din  = mapper182 ? m182_eff_din  : mapper114 ? m114_eff_din  : mapper263 ? m263_din      : mapper215 ? m215_eff_din : mapper217 ? m217_eff_din : (mapper123 && {prg_ain[14:13], prg_reg_odd} == 3'b000) ? {prg_din[7:3], m123_bank_lut} : eff_din;
+wire       mmc3_eff_valid = mapper114 ? m114_eff_valid : mapper217 ? m217_eff_valid : 1'b1;
 reg m199_bank_ext; // mapper 199 bank_select bit 3 flag
 
 always @(posedge clk)
@@ -730,6 +779,10 @@ if (~enable) begin
 	m215_exreg[0] <= 0;
 	m215_exreg[1] <= 8'h03;
 	m215_exreg[2] <= 0;
+	m217_exreg[0] <= 0;
+	m217_exreg[1] <= 8'hFF;
+	m217_exreg[2] <= 8'h03;
+	m217_exreg[3] <= 0;
 end else if (SaveStateBus_load) begin
 	irq_reg            <= SS_MAP1[ 6: 0];
 	bank_select        <= SS_MAP1[ 9: 7];
@@ -799,6 +852,10 @@ end else if (SaveStateBus_load) begin
 	m215_exreg[0]      <= SS_MAP4[ 7: 0];
 	m215_exreg[1]      <= SS_MAP4[15: 8];
 	m215_exreg[2]      <= SS_MAP4[23:16];
+	m217_exreg[0]      <= SS_MAP4[ 7: 0];
+	m217_exreg[1]      <= SS_MAP4[15: 8];
+	m217_exreg[2]      <= SS_MAP4[23:16];
+	m217_exreg[3]      <= {7'b0, SS_MAP4[32]};
 end else begin
 	if (ce) begin // M2
 		if (!regs_7e && prg_write && prg_ain[15]) begin
@@ -809,6 +866,7 @@ end else begin
 						if (mapper199) m199_bank_ext <= mmc3_eff_din[3];
 						if (mapper114) m114_cmd_latch <= 1;
 						if (mapper187) m187_gate <= 1;
+						if (mapper217 && m217_exreg[2]) m217_exreg[3] <= 1;
 					end
 					3'b00_1: if (!mapper187 || m187_gate) begin // Bank data ($8001-$9FFF, odd)
 						if (mapper199 && m199_bank_ext) begin
@@ -830,6 +888,7 @@ end else begin
 							end
 						end
 						if (mapper114) m114_cmd_latch <= 0;
+						if (mapper217 && m217_exreg[2]) m217_exreg[3] <= 0;
 					end
 					3'b01_0: begin // Mirroring ($A000-$BFFE, even)
 						if (!mapper208) mirroring <= !mmc3_eff_din[0];
@@ -1056,6 +1115,16 @@ end else begin
 				default: ;
 			endcase
 		end
+
+		// Mapper 217: Write to $5000/$5001/$5007 sets extended registers
+		if (prg_write && prg_ain[15:3] == 13'b0101_0000_0000_0 && mapper217) begin
+			case (prg_ain[2:0])
+				3'd0: m217_exreg[0] <= prg_din;
+				3'd1: if (m217_exreg[1] != prg_din) m217_exreg[1] <= prg_din;
+				3'd7: m217_exreg[2] <= prg_din;
+				default: ;
+			endcase
+		end
 	end
 
 	if (m2_inv) begin // Inverted M2
@@ -1151,12 +1220,12 @@ assign SS_MAP3_BACK[   61] = m224_outer;
 assign SS_MAP3_BACK[   62] = m12_chr_sel[0];
 assign SS_MAP3_BACK[   63] = m12_chr_sel[4];
 
-// SS_MAP4: Shared among mutually exclusive mappers (114/115/198/199/238/187/123/215)
-assign SS_MAP4_BACK[ 7: 0] = mapper114 ? m114_exreg : mapper115 ? m115_prg_reg : mapper198 ? m198_prg[0] : mapper199 ? m199_exreg[0] : mapper238 ? m238_exreg : mapper187 ? m187_exreg : mapper123 ? m123_exreg[0] : mapper215 ? m215_exreg[0] : 8'h0;
-assign SS_MAP4_BACK[15: 8] = mapper198 ? m198_prg[1] : mapper199 ? m199_exreg[1] : mapper123 ? m123_exreg[1] : mapper215 ? m215_exreg[1] : 8'h0;
-assign SS_MAP4_BACK[23:16] = mapper198 ? m198_prg[2] : mapper199 ? m199_exreg[2] : mapper215 ? m215_exreg[2] : 8'h0;
+// SS_MAP4: Shared among mutually exclusive mappers (114/115/198/199/238/187/123/215/217)
+assign SS_MAP4_BACK[ 7: 0] = mapper114 ? m114_exreg : mapper115 ? m115_prg_reg : mapper198 ? m198_prg[0] : mapper199 ? m199_exreg[0] : mapper238 ? m238_exreg : mapper187 ? m187_exreg : mapper123 ? m123_exreg[0] : mapper215 ? m215_exreg[0] : mapper217 ? m217_exreg[0] : 8'h0;
+assign SS_MAP4_BACK[15: 8] = mapper198 ? m198_prg[1] : mapper199 ? m199_exreg[1] : mapper123 ? m123_exreg[1] : mapper215 ? m215_exreg[1] : mapper217 ? m217_exreg[1] : 8'h0;
+assign SS_MAP4_BACK[23:16] = mapper198 ? m198_prg[2] : mapper199 ? m199_exreg[2] : mapper215 ? m215_exreg[2] : mapper217 ? m217_exreg[2] : 8'h0;
 assign SS_MAP4_BACK[31:24] = mapper198 ? m198_prg[3] : mapper199 ? m199_exreg[3] : 8'h0;
-assign SS_MAP4_BACK[   32] = mapper114 ? m114_cmd_latch : mapper115 ? m115_chr_reg : mapper199 ? m199_mirror_ext : mapper187 ? m187_gate : 1'b0;
+assign SS_MAP4_BACK[   32] = mapper114 ? m114_cmd_latch : mapper115 ? m115_chr_reg : mapper199 ? m199_mirror_ext : mapper187 ? m187_gate : mapper217 ? m217_exreg[3][0] : 1'b0;
 assign SS_MAP4_BACK[63:33] = 31'b0;
 
 // The PRG bank to load. Each increment here is 8kb. So valid values are 0..63.
@@ -1201,19 +1270,19 @@ always @* begin
 	if (mapper245) prgsel = (prgsel & 8'h3F) | {1'b0, chr_bank_0[1], 6'b0};
 	if (mapper224) prgsel = (prgsel & 8'h3F) | {1'b0, m224_outer, 6'b0};
 	// Mapper 114: bit 7 of exreg enables 32K NROM mode
-	if (mapper114 && m114_exreg[7]) prgsel = {4'b0, m114_exreg[3:0], prg_ain[13]};
+	if (mapper114 && m114_exreg[7]) prgsel = {3'b0, m114_exreg[3:0], prg_ain[13]};
 	// Mapper 115: bit 7 of prg_reg enables NROM override
 	if (mapper115 && m115_prg_reg[7]) begin
 		if (m115_prg_reg[5]) // 32KB NROM
-			prgsel = {4'b0, m115_prg_reg[3:1], prg_ain[14:13]};
+			prgsel = {3'b0, m115_prg_reg[3:1], prg_ain[14:13]};
 		else // Duplicated 16KB
-			prgsel = {4'b0, m115_prg_reg[3:0], prg_ain[13]};
+			prgsel = {3'b0, m115_prg_reg[3:0], prg_ain[13]};
 	end
 	// Mapper 198: all 4 PRG slots independently banked
 	if (mapper198) prgsel = m198_prg[prg_ain[14:13]];
 	// Mapper 199: PRG slots 2,3 overridden with m199_exreg[0,1]
 	if (mapper199) begin
-		case ({prg_ain[14:13], prg_rom_bank_mode && prg_invert_support})
+		casez ({prg_ain[14:13], prg_rom_bank_mode && prg_invert_support})
 			3'b10_0, 3'b00_1: prgsel = m199_exreg[0]; // Slot 2 (mode 0 = $C000, mode 1 = $8000)
 			3'b11_?: prgsel = m199_exreg[1]; // Slot 3 ($E000)
 			default: ; // Slots 0,1 use standard MMC3
@@ -1258,6 +1327,20 @@ always @* begin
 				prgsel = {1'b0, m215_exreg[1][1:0], m215_exreg[1][4], prgsel[3:0]};
 			else // 32-page mask
 				prgsel = {1'b0, m215_exreg[1][1:0], prgsel[4:0]};
+		end
+	end
+	// Mapper 217: PRG override with NROM and outer banking
+	if (mapper217) begin
+		if (m217_exreg[0][7]) begin // NROM 16KB duplicated
+			if (m217_exreg[1][3]) // 32-page window
+				prgsel = {1'b0, m217_exreg[1][1:0], m217_exreg[0][3:0], prg_ain[13]};
+			else // 16-page window + sbank
+				prgsel = {1'b0, m217_exreg[1][1:0], m217_exreg[1][4], m217_exreg[0][2:0], prg_ain[13]};
+		end else begin // Standard MMC3 + outer bank
+			if (m217_exreg[1][3]) // 32-page mask
+				prgsel = {1'b0, m217_exreg[1][1:0], prgsel[4:0]};
+			else // 16-page mask + sbank
+				prgsel = {1'b0, m217_exreg[1][1:0], m217_exreg[1][4], prgsel[3:0]};
 		end
 	end
 	if (mapper249 && m249_reg[1]) begin
@@ -1410,6 +1493,13 @@ wire [9:0] m215_chr_final = m215_exreg[0][6]
 	? {m215_exreg[1][3:2], m215_exreg[1][5], chrsel[6:0]}
 	: {m215_exreg[1][3:2], chrsel[7:0]};
 
+// Mapper 217 CHR outer bank calculation
+// bit3=0: {exRegs[1][1:0], exRegs[1][4], chrsel[6:0]} (7-bit mask + outer)
+// bit3=1: {exRegs[1][1:0], chrsel[7:0]} (8-bit pass-through + outer)
+wire [9:0] m217_chr_final = m217_exreg[1][3]
+	? {m217_exreg[1][1:0], chrsel[7:0]}
+	: {m217_exreg[1][1:0], m217_exreg[1][4], chrsel[6:0]};
+
 wire [21:0] prg_aout_tmp = {1'b0, mapper268 ? map268p[20:13] : mapper45 ? m45_prg_final : mapper52 ? m52_prg_final : prgsel, prg_ain[12:0]};
 
 wire ram_enable_a = !MMC6 ? (ram_enable[prg_ain[12:11]])
@@ -1448,6 +1538,7 @@ assign chr_aout =
 		(mapper52)                           ? {2'b10,         m52_chr_final, chr_ain[9:0]} : // Mapper 52 CHR override
 		(mapper44)                           ? {2'b10,         m44_chr_final, chr_ain[9:0]} : // Mapper 44 CHR override
 		(mapper215)                          ? {2'b10,        m215_chr_final, chr_ain[9:0]} : // Mapper 215 CHR override
+		(mapper217)                          ? {2'b10,        m217_chr_final, chr_ain[9:0]} : // Mapper 217 CHR override
 		                                       {3'b10_0,                chrsel, chr_ain[9:0]};    // Standard MMC3 CHR-ROM/RAM
 
 wire ram_a13 = mapper268 && m268_reg[3][5] && (prg_ain[15:12] == 4'h5);

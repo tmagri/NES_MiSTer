@@ -2450,6 +2450,182 @@ assign vram_a10 = mirroring ? chr_ain[11] : chr_ain[10];
 
 endmodule
 
+// #193 -  NTDEC TC-112
+// Games: Fighting Hero, War in the Gulf
+module Mapper193(
+	input        clk,         // System clock
+	input        ce,          // M2 ~cpu_clk
+	input        enable,      // Mapper enabled
+	input [31:0] flags,       // Cart flags
+	input [15:0] prg_ain,     // prg address
+	inout [21:0] prg_aout_b,  // prg address out
+	input        prg_read,    // prg read
+	input        prg_write,   // prg write
+	input  [7:0] prg_din,     // prg data in
+	inout  [7:0] prg_dout_b,  // prg data out
+	inout        prg_allow_b, // Enable access to memory for the specified operation.
+	input [13:0] chr_ain,     // chr address in
+	inout [21:0] chr_aout_b,  // chr address out
+	input        chr_read,    // chr ram read
+	inout        chr_allow_b, // chr allow write
+	inout        vram_a10_b,  // Value for A10 address line
+	inout        vram_ce_b,   // True if the address should be routed to the internal 2kB VRAM.
+	inout        irq_b,       // IRQ
+	input [15:0] audio_in,    // Inverted audio from APU
+	inout [15:0] audio_b,     // Mixed audio output
+	inout [15:0] flags_out_b  // flags {0, 0, 0, 0, has_savestate, prg_conflict, prg_bus_write, has_chr_dout}
+);
+
+assign prg_aout_b   = enable ? prg_aout : 22'hZ;
+assign prg_dout_b   = enable ? 8'hFF : 8'hZ;
+assign prg_allow_b  = enable ? prg_allow : 1'hZ;
+assign chr_aout_b   = enable ? chr_aout : 22'hZ;
+assign chr_allow_b  = enable ? chr_allow : 1'hZ;
+assign vram_a10_b   = enable ? vram_a10 : 1'hZ;
+assign vram_ce_b    = enable ? vram_ce : 1'hZ;
+assign irq_b        = enable ? 1'b0 : 1'hZ;
+assign flags_out_b  = enable ? flags_out : 16'hZ;
+assign audio_b      = enable ? {1'b0, audio_in[15:1]} : 16'hZ;
+
+wire [21:0] prg_aout, chr_aout;
+wire prg_allow;
+wire chr_allow;
+wire vram_a10;
+wire vram_ce;
+wire [15:0] flags_out = 0;
+
+// Registers written at $6000-$7FFF
+// $6000: CHR 4KB page at $0000 (value >> 1 selects 2KB page pair)
+// $6001: CHR 2KB page at $1000
+// $6002: CHR 2KB page at $1800
+// $6003: PRG 8KB page at $8000
+reg [7:0] prg_bank;
+reg [7:0] chr_bank0, chr_bank1, chr_bank2;
+
+always @(posedge clk) begin
+	if (~enable) begin
+		prg_bank <= 0;
+		chr_bank0 <= 0;
+		chr_bank1 <= 0;
+		chr_bank2 <= 0;
+	end else if (ce && prg_write && prg_ain[15:13] == 3'b011) begin // $6000-$7FFF
+		case (prg_ain[1:0])
+			2'd0: chr_bank0 <= prg_din;
+			2'd1: chr_bank1 <= prg_din;
+			2'd2: chr_bank2 <= prg_din;
+			2'd3: prg_bank  <= prg_din;
+		endcase
+	end
+end
+
+// PRG: 8KB at $8000 switchable, $A000/$C000/$E000 fixed to last 3 banks
+reg [7:0] prg_sel;
+always @* begin
+	case (prg_ain[14:13])
+		2'b00: prg_sel = prg_bank;
+		2'b01: prg_sel = 8'hFD; // -3
+		2'b10: prg_sel = 8'hFE; // -2
+		2'b11: prg_sel = 8'hFF; // -1
+	endcase
+end
+assign prg_aout = {1'b0, prg_sel, prg_ain[12:0]};
+assign prg_allow = prg_ain[15] && !prg_write;
+
+// CHR: 4KB at $0000 (from chr_bank0 >> 1), 2KB at $1000, 2KB at $1800
+reg [7:0] chr_sel;
+always @* begin
+	case (chr_ain[12:11])
+		2'b00: chr_sel = {1'b0, chr_bank0[7:1]}; // 4KB: value >> 1 = 2KB page, +1 for second half
+		2'b01: chr_sel = {1'b0, chr_bank0[7:1]} + 8'd1;
+		2'b10: chr_sel = {1'b0, chr_bank1[7:1]};
+		2'b11: chr_sel = {1'b0, chr_bank2[7:1]};
+	endcase
+end
+assign chr_aout = {3'b10_0, chr_sel, chr_ain[10:0]};
+assign chr_allow = flags[15];
+
+assign vram_ce = chr_ain[13];
+assign vram_a10 = flags[14] ? chr_ain[10] : chr_ain[11]; // V/H from header
+
+endmodule
+
+// #104 - Codemasters Golden Five
+// Games: Golden Five multicart
+module Mapper104(
+	input        clk,         // System clock
+	input        ce,          // M2 ~cpu_clk
+	input        enable,      // Mapper enabled
+	input [31:0] flags,       // Cart flags
+	input [15:0] prg_ain,     // prg address
+	inout [21:0] prg_aout_b,  // prg address out
+	input        prg_read,    // prg read
+	input        prg_write,   // prg write
+	input  [7:0] prg_din,     // prg data in
+	inout  [7:0] prg_dout_b,  // prg data out
+	inout        prg_allow_b, // Enable access to memory for the specified operation.
+	input [13:0] chr_ain,     // chr address in
+	inout [21:0] chr_aout_b,  // chr address out
+	input        chr_read,    // chr ram read
+	inout        chr_allow_b, // chr allow write
+	inout        vram_a10_b,  // Value for A10 address line
+	inout        vram_ce_b,   // True if the address should be routed to the internal 2kB VRAM.
+	inout        irq_b,       // IRQ
+	input [15:0] audio_in,    // Inverted audio from APU
+	inout [15:0] audio_b,     // Mixed audio output
+	inout [15:0] flags_out_b  // flags {0, 0, 0, 0, has_savestate, prg_conflict, prg_bus_write, has_chr_dout}
+);
+
+assign prg_aout_b   = enable ? prg_aout : 22'hZ;
+assign prg_dout_b   = enable ? 8'hFF : 8'hZ;
+assign prg_allow_b  = enable ? prg_allow : 1'hZ;
+assign chr_aout_b   = enable ? chr_aout : 22'hZ;
+assign chr_allow_b  = enable ? chr_allow : 1'hZ;
+assign vram_a10_b   = enable ? vram_a10 : 1'hZ;
+assign vram_ce_b    = enable ? vram_ce : 1'hZ;
+assign irq_b        = enable ? 1'b0 : 1'hZ;
+assign flags_out_b  = enable ? flags_out : 16'hZ;
+assign audio_b      = enable ? {1'b0, audio_in[15:1]} : 16'hZ;
+
+wire [21:0] prg_aout, chr_aout;
+wire prg_allow;
+wire chr_allow;
+wire vram_a10;
+wire vram_ce;
+wire [15:0] flags_out = 0;
+
+// PRG register: low nibble from $C000+, high nibble from $8000-$9FFF (gated by bit 3)
+reg [6:0] prg_bank;  // 7-bit bank register
+reg [6:0] prg_fixed;  // fixed bank for $C000
+
+always @(posedge clk) begin
+	if (~enable) begin
+		prg_bank <= 0;
+		prg_fixed <= 7'h0F; // Last bank of first 256KB block
+	end else if (ce && prg_write && prg_ain[15]) begin
+		if (prg_ain[14]) begin // $C000-$FFFF
+			prg_bank[3:0] <= prg_din[3:0];
+		end else begin // $8000-$9FFF
+			if (prg_din[3]) begin
+				prg_bank[6:4] <= prg_din[2:0];
+				prg_fixed <= {prg_din[2:0], 4'hF}; // Last bank of selected 256KB block
+			end
+		end
+	end
+end
+
+// PRG: 16KB switchable at $8000, 16KB fixed at $C000
+assign prg_aout = {1'b0, prg_ain[14] ? prg_fixed : prg_bank, prg_ain[13:0]};
+assign prg_allow = prg_ain[15] && !prg_write;
+
+// CHR: 8KB from ROM/RAM (no banking)
+assign chr_aout = {9'b10_0000_000, chr_ain[12:0]};
+assign chr_allow = flags[15];
+
+assign vram_ce = chr_ain[13];
+assign vram_a10 = flags[14] ? chr_ain[10] : chr_ain[11]; // V/H from header
+
+endmodule
+
 // #31 -  NSF Player
 module NSF(
 	input        clk,         // System clock

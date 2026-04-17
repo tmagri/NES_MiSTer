@@ -331,7 +331,7 @@ wire mmc3_en = me[118] | me[119] | me[47] | me[206] | me[112] | me[88] | me[154]
 	| me[45] | me[52] | me[552] | me[44] | me[49] | me[134] | me[249] | me[250]
 	| me[182] | me[197] | me[224] | me[245]
 	| me[12] | me[114] | me[115] | me[198] | me[199] | me[263]
-	| me[238] | me[187] | me[123] | me[215];
+	| me[238] | me[187] | me[123] | me[215] | me[217];
 
 MMC3 mmc3 (
 	.clk        (clk),
@@ -1533,7 +1533,7 @@ NesEvent nesev(
 
 //*****************************************************************************//
 // Name   : Konami VRC-1                                                       //
-// Mappers: 75                                                                 //
+// Mappers: 75, 151                                                            //
 // Status : Needs Evaluation                                                   //
 // Notes  :                                                                    //
 // Games  : King Kong 2, Exciting Boxing, Tetsuwan Atom                        //
@@ -1542,7 +1542,7 @@ VRC1 vrc1(
 	.clk        (clk),
 	.ce         (ce),
 	.mapper_irq_pause(mapper_irq_pause),
-	.enable     (me[75]),
+	.enable     (me[75] | me[151]),
 	.flags      (flags),
 	.prg_ain    (prg_ain),
 	.prg_aout_b (prg_addr_b),
@@ -2187,6 +2187,68 @@ Mapper200 map200(
 	.clk        (clk),
 	.ce         (ce),
 	.enable     (me[200]),
+	.flags      (flags),
+	.prg_ain    (prg_ain),
+	.prg_aout_b (prg_addr_b),
+	.prg_read   (prg_read),
+	.prg_write  (prg_write),
+	.prg_din    (prg_din),
+	.prg_dout_b (prg_dout_b),
+	.prg_allow_b(prg_allow_b),
+	.chr_ain    (chr_ain),
+	.chr_aout_b (chr_addr_b),
+	.chr_read   (chr_read),
+	.chr_allow_b(chr_allow_b),
+	.vram_a10_b (vram_a10_b),
+	.vram_ce_b  (vram_ce_b),
+	.irq_b      (irq_b),
+	.flags_out_b(flags_out_b),
+	.audio_in   (audio_in),
+	.audio_b    (audio_out_b)
+);
+
+//*****************************************************************************//
+// Name   : NTDEC TC-112                                                       //
+// Mappers: 193                                                                //
+// Status : Working                                                            //
+// Notes  : Registers at $6000-$7FFF                                           //
+// Games  : Fighting Hero, War in the Gulf                                     //
+//*****************************************************************************//
+Mapper193 map193(
+	.clk        (clk),
+	.ce         (ce),
+	.enable     (me[193]),
+	.flags      (flags),
+	.prg_ain    (prg_ain),
+	.prg_aout_b (prg_addr_b),
+	.prg_read   (prg_read),
+	.prg_write  (prg_write),
+	.prg_din    (prg_din),
+	.prg_dout_b (prg_dout_b),
+	.prg_allow_b(prg_allow_b),
+	.chr_ain    (chr_ain),
+	.chr_aout_b (chr_addr_b),
+	.chr_read   (chr_read),
+	.chr_allow_b(chr_allow_b),
+	.vram_a10_b (vram_a10_b),
+	.vram_ce_b  (vram_ce_b),
+	.irq_b      (irq_b),
+	.flags_out_b(flags_out_b),
+	.audio_in   (audio_in),
+	.audio_b    (audio_out_b)
+);
+
+//*****************************************************************************//
+// Name   : Codemasters Golden Five                                            //
+// Mappers: 104                                                                //
+// Status : Working                                                            //
+// Notes  : Split PRG register (outer at $8000, inner at $C000)                //
+// Games  : Golden Five multicart                                              //
+//*****************************************************************************//
+Mapper104 map104(
+	.clk        (clk),
+	.ce         (ce),
+	.enable     (me[104]),
 	.flags      (flags),
 	.prg_ain    (prg_ain),
 	.prg_aout_b (prg_addr_b),
