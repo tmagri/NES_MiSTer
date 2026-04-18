@@ -222,24 +222,24 @@ reg [16:0] fb_addr_d;
 
 // -----------------------------------------------------------------------
 // Compounding Temporal Blending Math (IIR Filter)
-// 12.5% Current Frame, 87.5% Accumulated History Frame (2-frame blur)
+// 25% Current Frame, 75% Accumulated History Frame (1-frame blur)
 // By feeding the blended pixel back into the framebuffer, the blur 
-// continuously compounds across multiple frames, completely suppressing 
+// continuously compounds across multiple frames, suppressing 
 // 3+ color sequences like Zelda II's death screen.
 // -----------------------------------------------------------------------
 
-// Math: (ro + prev_rgb*7) / 8 -> Ensures no overflow
+// Math: (ro + prev_rgb*3) / 4 -> Ensures no overflow
 // Combinational: prev_rgb and ro are both registered and stable between
 // pix_ce edges, so these wires are glitch-free. Keeping blend combinational
 // ensures it has identical latency to ro (both 1 pix_ce behind hc),
 // eliminating any horizontal shift when strobe engages/disengages.
-wire [10:0] sum_r = {3'b000, ro} + {3'b000, prev_rgb[23:16]} + {2'b00, prev_rgb[23:16], 1'b0} + {1'b0, prev_rgb[23:16], 2'b00};
-wire [10:0] sum_g = {3'b000, go} + {3'b000, prev_rgb[15:8]}  + {2'b00, prev_rgb[15:8],  1'b0} + {1'b0, prev_rgb[15:8],  2'b00};
-wire [10:0] sum_b = {3'b000, bo} + {3'b000, prev_rgb[7:0]}   + {2'b00, prev_rgb[7:0],   1'b0} + {1'b0, prev_rgb[7:0],   2'b00};
+wire [9:0] sum_r = {2'b00, ro} + {2'b00, prev_rgb[23:16]} + {1'b0, prev_rgb[23:16], 1'b0};
+wire [9:0] sum_g = {2'b00, go} + {2'b00, prev_rgb[15:8]}  + {1'b0, prev_rgb[15:8],  1'b0};
+wire [9:0] sum_b = {2'b00, bo} + {2'b00, prev_rgb[7:0]}   + {1'b0, prev_rgb[7:0],   1'b0};
 
-wire [7:0] blend_r = sum_r[10:3];
-wire [7:0] blend_g = sum_g[10:3];
-wire [7:0] blend_b = sum_b[10:3];
+wire [7:0] blend_r = sum_r[9:2];
+wire [7:0] blend_g = sum_g[9:2];
+wire [7:0] blend_b = sum_b[9:2];
 
 // -----------------------------------------------------------------------
 // Framebuffer Read/Write Pipeline (latency-matched to ro/go/bo)
