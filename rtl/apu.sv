@@ -358,15 +358,22 @@ module TriangleChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_TRI, paramet
 	wire [3:0] lookahead_Y = lookahead_SeqPos[3:0] ^ {4{~lookahead_SeqPos[4]}};
 	wire [3:0] actual_Y = SeqPos[3:0] ^ {4{~SeqPos[4]}};
 
+	// Full 12-bit range step values: Y * 273 = (Y<<8) + (Y<<4) + Y maps 0-15 to 0x000-0xFFF
+	// This uses the full dynamic range and compensates for volume lost during smoothing
+	wire [11:0] lookahead_Y_full = {lookahead_Y, 8'd0} + {4'd0, lookahead_Y, 4'd0} + {8'd0, lookahead_Y};
+	wire [11:0] actual_Y_full    = {actual_Y, 8'd0} + {4'd0, actual_Y, 4'd0} + {8'd0, actual_Y};
+
 	wire slope_up = (lookahead_Y > actual_Y);
 	wire slope_dn = (lookahead_Y < actual_Y);
 
 	wire [13:0] freq_adj = {3'd0, applied_period} + 14'd1;
 
 	// 12-bit Fractional Error Distributing Divider Network for Triangle
-	// Calculates the exact dynamic step size needed to reach 12'hF00 naturally
-	wire [15:0] next_err = err_acc + 14'd256;
+	// Calculates the exact dynamic step size needed to reach 12'hFFF naturally
+	// Step = 273 matches Y * 273 full-range mapping (0-15 → 0x000-0xFFF)
+	wire [15:0] next_err = err_acc + 14'd273;
 
+	wire [21:0] fa_256 = {freq_adj, 8'd0};
 	wire [21:0] fa_128 = {1'b0, freq_adj, 7'd0};
 	wire [21:0] fa_64  = {2'd0, freq_adj, 6'd0};
 	wire [21:0] fa_32  = {3'd0, freq_adj, 5'd0};
@@ -378,33 +385,37 @@ module TriangleChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_TRI, paramet
 
 	wire [21:0] err_start = {6'd0, next_err};
 
-	wire [21:0] err_128 = err_start >= fa_128 ? err_start - fa_128 : err_start;
-	wire [7:0]  inc_128 = err_start >= fa_128 ? 8'd128 : 8'd0;
+	wire [21:0] err_256 = err_start >= fa_256 ? err_start - fa_256 : err_start;
+	wire [8:0]  inc_256 = err_start >= fa_256 ? 9'd256 : 9'd0;
+
+	wire [21:0] err_128 = err_256 >= fa_128 ? err_256 - fa_128 : err_256;
+	wire [8:0]  inc_128 = err_256 >= fa_128 ? 9'd128 : 9'd0;
 
 	wire [21:0] err_64 = err_128 >= fa_64 ? err_128 - fa_64 : err_128;
-	wire [7:0]  inc_64 = err_128 >= fa_64 ? 8'd64 : 8'd0;
+	wire [8:0]  inc_64 = err_128 >= fa_64 ? 9'd64 : 9'd0;
 
 	wire [21:0] err_32 = err_64 >= fa_32 ? err_64 - fa_32 : err_64;
-	wire [7:0]  inc_32 = err_64 >= fa_32 ? 8'd32 : 8'd0;
+	wire [8:0]  inc_32 = err_64 >= fa_32 ? 9'd32 : 9'd0;
 
 	wire [21:0] err_16 = err_32 >= fa_16 ? err_32 - fa_16 : err_32;
-	wire [7:0]  inc_16 = err_32 >= fa_16 ? 8'd16 : 8'd0;
+	wire [8:0]  inc_16 = err_32 >= fa_16 ? 9'd16 : 9'd0;
 
 	wire [21:0] err_8  = err_16 >= fa_8 ? err_16 - fa_8 : err_16;
-	wire [7:0]  inc_8  = err_16 >= fa_8 ? 8'd8 : 8'd0;
+	wire [8:0]  inc_8  = err_16 >= fa_8 ? 9'd8 : 9'd0;
 
 	wire [21:0] err_4  = err_8 >= fa_4 ? err_8 - fa_4 : err_8;
-	wire [7:0]  inc_4  = err_8 >= fa_4 ? 8'd4 : 8'd0;
+	wire [8:0]  inc_4  = err_8 >= fa_4 ? 9'd4 : 9'd0;
 
 	wire [21:0] err_2  = err_4 >= fa_2 ? err_4 - fa_2 : err_4;
-	wire [7:0]  inc_2  = err_4 >= fa_2 ? 8'd2 : 8'd0;
+	wire [8:0]  inc_2  = err_4 >= fa_2 ? 9'd2 : 9'd0;
 
 	wire [21:0] err_1  = err_2 >= fa_1 ? err_2 - fa_1 : err_2;
-	wire [7:0]  inc_1  = err_2 >= fa_1 ? 8'd1 : 8'd0;
+	wire [8:0]  inc_1  = err_2 >= fa_1 ? 9'd1 : 9'd0;
 
-	wire [7:0] total_inc = inc_128 + inc_64 + inc_32 + inc_16 + inc_8 + inc_4 + inc_2 + inc_1;
+	wire [8:0] total_inc = inc_256 + inc_128 + inc_64 + inc_32 + inc_16 + inc_8 + inc_4 + inc_2 + inc_1;
 
 	assign Sample = (applied_period > 1 || allow_us) ? (smooth_audio ? smooth_acc : {actual_Y, 8'h00}) : sample_latch;
+
 
 	LenCounterUnit LenTri (
 		.clk            (clk),
@@ -431,7 +442,7 @@ module TriangleChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_TRI, paramet
 				applied_period <= Period;
 				if (IsNonZero & ~LinCtrZero) begin
 					SeqPos <= SeqPos + 1'd1;
-					smooth_acc <= {lookahead_Y, 8'h00};
+					smooth_acc <= lookahead_Y_full;
 					err_acc <= 0;
 				end
 			end else begin
@@ -439,7 +450,7 @@ module TriangleChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_TRI, paramet
 				if (IsNonZero & ~LinCtrZero) begin
 					if (applied_period < 11'd8) begin
 						// Bypass smoothing for ultra-high frequencies
-						smooth_acc <= {actual_Y, 8'h00};
+						smooth_acc <= actual_Y_full;
 						err_acc <= 0;
 					end else begin
 						// Retain leftover fractional error
@@ -447,7 +458,7 @@ module TriangleChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_TRI, paramet
 						
 						// Add the dynamic calculated step instead of just + 1'b1
 						if (slope_up) begin
-							if (smooth_acc + total_inc > 12'hF00) smooth_acc <= 12'hF00;
+							if (smooth_acc + total_inc > 12'hFFF) smooth_acc <= 12'hFFF;
 							else smooth_acc <= smooth_acc + total_inc;
 						end else if (slope_dn) begin
 							if (smooth_acc < total_inc) smooth_acc <= 12'h000;
@@ -1572,7 +1583,13 @@ wire [15:0] tri_reg    = mix_lut[tri_reg_idx];
 wire [15:0] tri_base   = mix_lut[tri_base_idx];
 wire [15:0] tri_next   = mix_lut[tri_next_idx];
 wire [15:0] tri_smooth = tri_base + (((tri_next - tri_base) * {10'd0, tri_frac}) >> 6);
-assign sample_tri = smooth_audio ? tri_smooth : tri_reg;
+
+// Smooth Audio volume compensation: smoothing removes staircase harmonics and linear
+// interpolation of the concave LUT underestimates the curve, losing ~12% perceived volume.
+// A clean 9/8 (12.5%) boost via bit-shift: tri_smooth + (tri_smooth >> 3)
+wire [16:0] tri_boosted = {1'b0, tri_smooth} + {4'b0, tri_smooth[15:3]};
+wire [15:0] tri_compensated = tri_boosted[16] ? 16'hFFFF : tri_boosted[15:0];
+assign sample_tri = smooth_audio ? tri_compensated : tri_reg;
 
 assign sample_noi = mix_lut[noi_idx];
 assign sample_dmc = mix_lut[dmc_idx];

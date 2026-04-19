@@ -1246,9 +1246,10 @@ reg [14:0] err_acc;
 wire [13:0] freq2_adj = {1'b0, freq2, 1'b1} + 14'd1;
 
 // 12-bit Fractional Error Distributing Divider Network
-// Adds precisely (vol2 << 4) micro-steps distributed uniformly over freq2_adj clocks
-wire [13:0] step_val = {2'd0, vol2, 4'd0}; // Step diff perfectly scaled for the missing 4-bits
-wire [15:0] next_err = err_acc + step_val;
+// Adds precisely (vol2 * 17) micro-steps distributed uniformly over freq2_adj clocks
+// The 17/16 scaling naturally uses more of the 12-bit range for the smooth output
+wire [11:0] step_val = {2'd0, vol2, 4'd0} + {6'd0, vol2}; // vol2 * 17 = (vol2 << 4) + vol2
+wire [15:0] next_err = err_acc + {4'd0, step_val};
 
 wire [18:0] fa_32 = {freq2_adj, 5'd0};
 wire [18:0] fa_16 = {1'b0, freq2_adj, 4'd0};
@@ -1331,8 +1332,8 @@ always@(posedge clk) begin
 		duty1cnt <= SS_MAP2[47:44];
 		duty2cnt <= SS_MAP2[50:48];
 		acc      <= SS_MAP2[58:51];
-		// Re-sync smoothing variables natively on state load
-		smooth_acc <= {SS_MAP2[58:51], 4'd0};
+		// Re-sync smoothing variables natively on state load (acc * 17)
+		smooth_acc <= {SS_MAP2[58:51], 4'd0} + {4'd0, SS_MAP2[58:51]};
 		err_acc    <= 0;
 	end else if(ce) begin
 		if(wr) begin
@@ -1372,7 +1373,7 @@ always@(posedge clk) begin
 					div2<=div2-1'd1;
 					if (freq2_adj < 14'd16) begin
 						// Bypass mathematically filtering for ultra-high frequencies (~111 kHz base sample step)
-						smooth_acc <= {acc, 4'd0}; 
+						smooth_acc <= {acc, 4'd0} + {4'd0, acc}; // acc * 17
 						err_acc <= 0;
 					end else begin
 						err_acc <= err_1[14:0];
@@ -1389,7 +1390,8 @@ always@(posedge clk) begin
 						duty2cnt<=duty2cnt+1'd1;
 						acc<=acc+vol2;
 						// Re-sync explicitly at step boundaries to permanently prevent fractional drift
-						smooth_acc<={(acc+vol2), 4'd0}; 
+						// Scale by * 17 to naturally use more of the 12-bit range
+						smooth_acc<={(acc+vol2), 4'd0} + {4'd0, (acc+vol2)}; 
 						err_acc<=0;
 					end
 				end
