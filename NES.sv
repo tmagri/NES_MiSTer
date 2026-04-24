@@ -242,7 +242,7 @@ parameter CONF_STR = {
 	"d7rB,Restore state(F1-F4);",
 	"-;",
 	"O[72:71],CPU Overclock,Off,Turbo (1.33x),Medium (1.50x),Extreme (2.00x);",
-	"O[75],OC Method,Postrender,VBlank;",
+	"O[79:78],OC Method,Postrender,VBlank,1/2 Split;",
 	"-;",
 	"P1,Audio & Video;",
 	"P1-;",
@@ -257,11 +257,12 @@ parameter CONF_STR = {
 	"P1O[68:67],Overscan,Normal,Vertical Overscan,Borders,Everything;",
 	"P1ORS,Mask Edges,Off,Left,Both,Auto;",
 	"P1OP,Extra Sprites,Off,On;",
-	"P1O[76],Epileptic-Friendly Filter,Off,On;",
+	"P1O[76],Epileptic-Friendly Mode,Off,On;",
 	"P1-;",
 	"P1OUV,Audio Enable,Both,Internal,Cart Expansion,None;",
 	"P1O[74],Stereo,Off,On;",
-	"P1O[73],Smooth Audio,Off,On;",
+	"P1O[73],Smooth Triangle,Off,On;",
+	"P1O[77],Smooth Noise,Off,On;",
 	"P2,Input Options;",
 	"P2-;",
 	"P2O9,Swap Joysticks,No,Yes;",
@@ -901,13 +902,13 @@ wire reset_nes =
 // to ensure all pipeline registers, clock dividers and PPU state settle completely.
 reg [1:0] old_sys_type;
 reg [1:0] old_overclock;
-reg       old_oc_method;
+reg [1:0] old_oc_method;
 reg [19:0] oc_reset_cnt = 0;
 always @(posedge clk) begin
     old_sys_type  <= effective_sys_type;
     old_overclock <= status[72:71];
-    old_oc_method <= status[75];
-    if (old_overclock != status[72:71] || old_oc_method != status[75])
+    old_oc_method <= status[79:78];
+    if (old_overclock != status[72:71] || old_oc_method != status[79:78])
         oc_reset_cnt <= 20'hFFFFF;      // hold for ~50ms / 2 frames
     else if (|oc_reset_cnt)
         oc_reset_cnt <= oc_reset_cnt - 1'd1;
@@ -983,6 +984,7 @@ NES nes (
 	.ext_audio       (ext_audio),
 	.stereo_en       (stereo_en),
 	.smooth_audio    (status[73]), // Use bit 73 for smoothing
+	.smooth_noise    (status[77]), // Noise envelope attack smoother
 	.apu_ce          (apu_ce),
 	// Video
 	.ex_sprites      (status[25]),
@@ -1063,7 +1065,7 @@ NES nes (
 	.SAVE_out_be             (ss_be),
 	.SAVE_out_done           (ss_ack),           // should be one cycle high when write is done or read value is valid
 	.overclock               (status[72:71]),
-	.oc_method               (~status[75])
+	.oc_method               (status[79:78] == 2'd0 ? 2'd1 : (status[79:78] == 2'd1 ? 2'd0 : 2'd2))
 );
 
 wire [24:0] cpu_addr;

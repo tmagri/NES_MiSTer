@@ -1,25 +1,23 @@
 # [**Nintendo Entertainment System**](https://en.wikipedia.org/wiki/Nintendo_Entertainment_System) **for [MiSTer Platform](https://github.com/MiSTer-devel/Main_MiSTer/wiki)**
 
-**⚠️ Fork Notice:** Due to the OC (Overclocking) feature, this is maintained as a separate fork due to potential instability. You may experience issues where reloading a ROM or numerous resets of the console are required to get the OC going. **Using savestates may also have issues.** Enjoy\! A huge thank you to the original NES\_MiSTer devs as well.
+**⚠️ Fork Notice:** Due to the OC (Overclocking) feature, this is maintained as a separate fork due to potential instability. You may experience issues where reloading a ROM or numerous resets of the console are required to get the OC going. **Using savestates may also have issues (this has been improved recently).** Enjoy\! A huge thank you to the original NES\_MiSTer devs as well.
 
 This is an FPGA implementation of the NES/Famicom based on [FPGANES](https://github.com/strigeus/fpganes) by Ludvig Strigeus and ported to MiSTer.
 
 ## **Fork Features & Updates**
 
-### **Postrender Overclock (OC) — The Default Mode**
+### **NES Overclocking Methods**
 
-A new overclocking method that improves compatibility and stability across the NES library.
+A comprehensive suite of overclocking options designed to eliminate slowdowns while improving compatibility and stability across the NES library.
 
-* Applies overclocking after the PPU’s render phase.  
-* Avoids CPU/PPU timing conflicts, especially around $2002 reads.  
-* Reduces visual glitches and improves frame pacing.  
-* More stable than previous OC methods and enabled by default for better out‑of‑the‑box performance.  
-* **Note:** Some games like *Parodius* and *Castlevania III \[J\]* work better with **VBlank** overclocking rather than **Postrender**. **Postrender** works best with *Kirby's Adventure* and *Battletoads*. "Extreme" 100% mode is not recommended for most games. Medium (1.50x) is recommended for most.
+* **Postrender Overclock (Default):** Applies overclocking after the PPU’s render phase. Avoids CPU/PPU timing conflicts, especially around $2002 reads, reduces visual glitches, and improves frame pacing. Recommended for games like *Kirby's Adventure* and *Battletoads*.
+* **1/2 Overclock (Split):** Distributes extra overclocking scanlines evenly before and after the NMI, creating a stable 0.5 VBlank Postrender configuration. Note: This may be useless for most games and was added as an experiment.
+* **VBlank Extension:** A CPU-only overclocking method that utilizes VBlank extension to increase CPU frequency while maintaining standard 60fps video and cycle-accurate audio. Recommended for games like *Parodius* and *Castlevania III \[J\]* which work better with this method.
 
-### **NES Overclocking & VBlank Extension**
+**Performance Modes:**
 
-* **VBlank Extension (up to 100% OC):** A CPU-only overclocking method that utilizes VBlank extension to increase CPU frequency by up to 100% while maintaining standard 60fps video and cycle-accurate audio. It uses a dedicated 1.78MHz mapper clock for proper cycle synchronization to preserve compatibility with complex mappers.  
-* **Medium (1.50×) Mode:** A stable intermediate performance boost using dynamic PPU clocking and anti-jitter logic. Ideal for most games.  
+* **Medium (1.50×) Mode:** A stable intermediate performance boost using dynamic PPU clocking and anti-jitter logic. Ideal and recommended for most games.
+* **Extreme (100%) Mode:** Doubles the CPU speed. Uses a dedicated 1.78MHz mapper clock for proper cycle synchronization to preserve compatibility with complex mappers. Not recommended for most games.
 * **APU Pitch Correction:** Dynamically scales expansion audio. Ensures that mappers with internal sound hardware (like VRC6/VRC7) maintain their original pitch and timing during overclocked gameplay.
 
 ### **High-Fidelity Stereo Audio Overhaul**
@@ -29,7 +27,8 @@ True Stereo Sound implemented with high-quality separation (enable "Stereo Mix" 
 * **Left Channel:** Pulse 1, Triangle, and DMC.  
 * **Right Channel:** Pulse 2, Noise, and DMC.  
 * **Unified Mixing Logic:** Fixed "loud and clipping" audio in Mono mode by implementing a unified internal downmixing pipeline. Mono and Stereo now share the same gain structure and expansion audio balance.  
-* **Smooth Audio (Pure Triangle/Sawtooth):** An optional audio‑interpolation system that smooths the NES’s stepped triangle and sawtooth‑like waveforms. It reduces digital harshness, aliasing, and stair‑step artifacts—especially noticeable when overclocking—while preserving accurate pitch and timing. The reduced bass may affect nostalgia or fondness for the original NES sound for some users.
+* **Smooth Triangle (Pure Triangle/Sawtooth):** An optional audio‑interpolation system that smooths the NES’s stepped triangle and sawtooth‑like waveforms. It reduces digital harshness, aliasing, and stair‑step artifacts—especially noticeable when overclocking—while preserving accurate pitch and timing. The reduced bass may affect nostalgia or fondness for the original NES sound for some users.
+* **Smooth Noise:** A togglable low-pass filter within the audio pipeline to mitigate harsh "pop" and transient artifacts in the NES noise channel.
 
 ### **Epileptic‑Friendly Filter (Temporal Frame Blending)**
 

@@ -135,6 +135,7 @@ module NES(
 	input         ext_audio,
 	input         stereo_en,
 	input         smooth_audio,
+	input         smooth_noise,
 	output        apu_ce,
 	output        ppu_ce_out,
 	input         gg,
@@ -182,7 +183,7 @@ module NES(
 	output  [7:0] SAVE_out_be,
 	input         SAVE_out_done,   // should be one cycle high when write is done or read value is valid
 	input   [1:0] overclock,       // 0=off, 1=mild 60fps, 2=full 60fps
-	input         oc_method
+	input   [1:0] oc_method
 );
 
 
@@ -628,6 +629,7 @@ APU apu(
 	.put_ce         (put_ce),
 	.get_ce         (get_ce),
 	.smooth_audio   (smooth_audio),
+	.smooth_noise   (smooth_noise),
 	// savestates
 	.SaveStateBus_Din  (SaveStateBus_Din ),
 	.SaveStateBus_Adr  (SaveStateBus_Adr ),

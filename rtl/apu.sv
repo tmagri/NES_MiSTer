@@ -548,6 +548,7 @@ module NoiseChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_NOI) (
 	input  logic       LenCtr_Clock,
 	input  logic       Env_Clock,
 	input  logic       Enabled,
+	input  logic       smooth_noise,
 	output logic [3:0] Sample,
 	output logic       IsNonZero,
 	// savestates
@@ -582,8 +583,42 @@ module NoiseChan #(parameter [9:0] SSREG_INDEX = SSREG_INDEX_APU_NOI) (
 	assign IsNonZero = lc;
 	assign subunit_write = (Addr == 0 || Addr == 3) & write;
 
+	// Smooth Noise: gated envelope attack limiter
+	// We smooth the GATED envelope (lc ? Envelope : 0).
+	// The LFSR gate (Shift[14]) is applied AFTER smoothing, so noise texture
+	// is 100% preserved — only the volume attack is softened.
+	wire [3:0] gated_env = lc ? Envelope : 4'd0;
+	logic [3:0] smooth_env;
+	logic [8:0] attack_ctr; // Increased to 9 bits for a slower ~8.6ms ramp
+	always_ff @(posedge clk) begin
+		if (aclk1) begin
+			if (gated_env > smooth_env) begin
+				// Volume is rising — ramp up slowly
+				attack_ctr <= attack_ctr + 1'b1;
+				if (&attack_ctr)
+					smooth_env <= smooth_env + 4'd1;
+			end else if (gated_env < smooth_env) begin
+				// Volume is falling — ramp down slowly to prevent release pops
+				attack_ctr <= attack_ctr + 1'b1;
+				if (&attack_ctr)
+					smooth_env <= smooth_env - 4'd1;
+			end else begin
+				// Steady state
+				attack_ctr <= 0;
+			end
+		end
+		if (reset) begin
+			smooth_env <= 4'd0;
+			attack_ctr <= 8'd0;
+		end
+	end
+
 	// Produce the output signal
-	assign Sample = (~lc || Shift[14]) ? 4'd0 : Envelope;
+	// When smooth_noise is on, use the attack-limited gated envelope
+	// and apply only the LFSR gate (noise texture) on top.
+	assign Sample = smooth_noise
+		? (Shift[14] ? 4'd0 : smooth_env)
+		: ((~lc || Shift[14]) ? 4'd0 : Envelope);
 
 	LenCounterUnit LenNoi (
 		.clk            (clk),
@@ -682,6 +717,7 @@ module DmcChan #(parameter [9:0] SSREG_INDEX_DMC1 = SSREG_INDEX_APU_DMC1, parame
 	input  logic        dma_ack,      // 1 when DMC byte is on DmcData. DmcDmaRequested should go low.
 	input  logic  [7:0] dma_data,     // Input data to DMC from memory.
 	input  logic        PAL,
+	input  logic        smooth_noise,
 	output logic [15:0] dma_address,     // Address DMC wants to read
 	output logic        irq,
 	output logic  [6:0] Sample,
@@ -739,7 +775,38 @@ module DmcChan #(parameter [9:0] SSREG_INDEX_DMC1 = SSREG_INDEX_APU_DMC1, parame
 		9'h162, 9'h123, 9'h0E3, 9'h0D5
 	};
 
-	assign Sample = dmc_volume_next[6:0];
+	// --- SMART DPCM SLEW LIMITER ---
+	logic [6:0] smooth_dmc;
+	logic [1:0] dmc_slew_ctr; // <-- Changed from [5:0] to [1:0] for a subtle attack
+
+	wire [6:0] dmc_target = dmc_volume_next[6:0];
+	wire [6:0] dmc_delta  = (dmc_target > smooth_dmc) ? (dmc_target - smooth_dmc) : (smooth_dmc - dmc_target);
+
+	always_ff @(posedge clk) begin
+		if (aclk1) begin
+			if (dmc_delta <= 7'd2) begin
+				// Normal DPCM playback (+/- 2): follow instantly to preserve sample fidelity
+				smooth_dmc <= dmc_target;
+				dmc_slew_ctr <= 0;
+			end else if (dmc_target > smooth_dmc) begin
+				// Large $4011 upward write: slew gently
+				dmc_slew_ctr <= dmc_slew_ctr + 1'b1;
+				if (&dmc_slew_ctr) smooth_dmc <= smooth_dmc + 7'd1;
+			end else if (dmc_target < smooth_dmc) begin
+				// Large $4011 downward write: slew gently
+				dmc_slew_ctr <= dmc_slew_ctr + 1'b1;
+				if (&dmc_slew_ctr) smooth_dmc <= smooth_dmc - 7'd1;
+			end
+		end
+
+		if (reset || cold_reset) begin
+			smooth_dmc <= 0;
+			dmc_slew_ctr <= 0;
+		end
+	end
+
+	assign Sample = smooth_noise ? smooth_dmc : dmc_volume_next[6:0];
+	// -------------------------------
 	assign dma_req = ~have_buffer & enable_3;
 	logic dmc_clock;
 
@@ -1096,6 +1163,7 @@ module APU #(
 	output logic        get_ce,         // Clock enable for a get cycle
 	output logic        put_ce,         // Clock enable for a put cycle
 	input  logic        smooth_audio,   // NEW
+	input  logic        smooth_noise,   // Noise envelope attack smoother
 	// savestates
 	input       [63:0]  SaveStateBus_Din,
 	input       [ 9:0]  SaveStateBus_Adr,
@@ -1351,6 +1419,7 @@ module APU #(
 		.LenCtr_Clock (ClkL),
 		.Env_Clock    (ClkE),
 		.Enabled      (Enabled[3]),
+		.smooth_noise (smooth_noise),
 		.Sample       (NoiSample),
 		.IsNonZero    (NoiNonZero),
 		// savestates
@@ -1376,6 +1445,7 @@ module APU #(
 		.dma_ack     (DmaAck),
 		.dma_data    (DmaData),
 		.PAL         (PAL),
+		.smooth_noise(smooth_noise),
 		.dma_address (DmaAddr),
 		.irq         (DmcIrq),
 		.Sample      (DmcSample),
