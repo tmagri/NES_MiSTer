@@ -4,6 +4,7 @@ module N163(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
 	input        mapper_ce,   // Native un-overclocked M2
+	input        audio_ce,    // Native un-overclocked M2 (never pauses)
 	input        enable,      // Mapper enabled
 	input [63:0] flags,       // Cart flags
 	input [15:0] prg_ain,     // prg address
@@ -388,6 +389,7 @@ endmodule
 module namco163_mixed (
 	input         clk,
 	input         ce,
+	input         audio_ce,
 	input   [3:0] submapper,
 	input         enable,
 	input         wren,
@@ -433,7 +435,7 @@ wire [10:0] n163_out;
 
 namco163_sound n163
 (
-	clk, ce, enable, wren, addr_in, data_in, data_out, n163_out,
+	clk, ce, audio_ce, enable, wren, addr_in, data_in, data_out, n163_out,
 	// savestates
 	SaveStateBus_Din, 
 	SaveStateBus_Adr,
@@ -471,6 +473,7 @@ endmodule
 module namco163_sound(
 	input clk20,
 	input m2,
+	input audio_ce,
 	input enable,
 	input wr,
 	input [15:0] ain,
@@ -547,7 +550,7 @@ reg [3:0] count45,cnt45;
 always@(posedge clk20) begin
 	if (SaveStateBus_load) begin
 		count45 <= SS_MAP1[12: 9];
-	end else if (m2) begin
+	end else if (audio_ce) begin
 		count45<=(count45==14)?4'd0:count45+1'd1;
 	end
 end

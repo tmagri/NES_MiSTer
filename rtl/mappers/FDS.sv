@@ -3,6 +3,7 @@
 module MapperFDS(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
+	input        audio_ce,
 	input        enable,      // Mapper enabled
 	input [31:0] flags,       // Cart flags
 	input [15:0] prg_ain,     // prg address
@@ -563,6 +564,7 @@ endmodule
 module fds_mixed (
 	input         clk,
 	input         ce,    // Negedge M2 (aka CPU ce)
+	input         audio_ce,
 	input         enable,
 	input         wren,
 	input  [15:0] addr_in,
@@ -584,6 +586,7 @@ fds_audio fds_audio
 (
 	.clk(clk),
 	.m2(ce),
+	.audio_ce(audio_ce),
 	.reset(!enable),
 	.wr(wren),
 	.addr_in(addr_in),
@@ -648,6 +651,7 @@ endmodule
 module fds_audio(
 	input            clk,
 	input            m2,
+	input            audio_ce,
 	input            reset,
 	input            wr,
 	input     [15:0] addr_in,
@@ -759,9 +763,6 @@ always_comb begin
 end
 
 always_ff @(posedge clk) begin
-reg old_m2;
-
-old_m2 <= m2;
 if (reset) begin
 	sweep_disable <= 1'b1;
 	env_disable <= 1'b1;
@@ -797,11 +798,13 @@ end else if (Savestate_MAPRAMWrEn) begin
 		8'h16: { mod_step, env_disable, vol_ticks } <= ss_di;
 		// $20-$3F
 		8'b001?????: mod_table[Savestate_MAPRAMAddr[4:0]] <= ss_di[2:0];
-		// $40-$7F
+	// $40-$7F
 		8'b01??????: wave_table[Savestate_MAPRAMAddr[5:0]] <= ss_di[5:0];
 		default: ;
 	endcase
-end else if (~old_m2 & m2) begin
+end
+
+if (audio_ce) begin
 	//**** Timings ****//
 	cycles <= wave_disable ? 4'h0 : cycles + 1'b1;
 
@@ -862,7 +865,9 @@ end else if (~old_m2 & m2) begin
 
 	if (~wave_wren)
 		wave_latch <= wave_table[wave_accum[23:18]];
+end
 
+if (m2) begin
 	//**** Registers ****//
 	if (wr) begin
 		if (addr_in >= 'h4040 && addr_in < 'h4080) begin

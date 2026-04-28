@@ -63,7 +63,8 @@ module cart_top (
 	input             fds_auto_eject, // FDS Auto Swap Enabled
 	input       [1:0] max_diskside,   // FDS disk side count
 	input             fds_fast,       // FDS disk access speed
-	input             mapper_ce,      // Standard ~1.78MHz CPU speed
+	input             mapper_ce,      // Standard ~1.78MHz CPU speed (pauses on stall)
+	input             audio_ce,       // Standard ~1.78MHz CPU speed (never pauses)
 	input             put_ce,         // CPU write phase clock enable (for synchronized expansion audio)
 	input             mapper_irq_pause, // Pause cycle-based mappers during OC extended Vblank
 	input       [1:0] overclock,      // Overclock mode (0=off, 1=turbo, 2=medium, 3=extreme)
@@ -420,6 +421,7 @@ MMC4 mmc4(
 MMC5 mmc5(
 	.clk        (clk),
 	.ce         (ce),
+	.audio_ce   (audio_ce),
 	.enable     (me[5]),
 	.flags      (flags),
 	.prg_ain    (prg_ain),
@@ -905,6 +907,7 @@ Mapper68 map68(
 Mapper69 map69(
 	.clk        (clk),
 	.ce         (ce),
+	.audio_ce   (audio_ce),
 	.enable     (me[69]),
 	.flags      (flags),
 	.prg_ain    (prg_ain),
@@ -1717,6 +1720,7 @@ VRC5 vrc5(
 VRC6 vrc6(
 	.clk        (clk),
 	.ce         (ce),
+	.audio_ce   (audio_ce),
 	.mapper_irq_pause(mapper_irq_pause),
 	.enable     (me[24] | me[26]),
 	.flags      (flags),
@@ -1758,6 +1762,7 @@ VRC6 vrc6(
 VRC7 vrc7(
 	.clk        (clk),
 	.ce         (ce),
+	.audio_ce   (audio_ce),
 	.mapper_irq_pause(mapper_irq_pause),
 	.enable     (me[85]),
 	.flags      (flags),
@@ -1792,6 +1797,7 @@ VRC7 vrc7(
 N163 n163(
 	.clk        (clk),
 	.ce         (ce),
+	.audio_ce   (audio_ce),
 	.enable     (me[210] | me[19]),
 	.flags      (flags),
 	.prg_ain    (prg_ain),
@@ -2467,6 +2473,7 @@ tri0 [1:0] fds_diskside;
 MapperFDS mapfds(
 	.clk        (clk),
 	.ce         (ce),
+	.audio_ce   (audio_ce),
 	.enable     (me[20]),
 	.flags      (flags),
 	.prg_ain    (prg_ain),
@@ -2551,6 +2558,7 @@ wire [15:0] ss5b_audio;
 SS5b_mixed snd_5bm (
 	.clk(clk),
 	.ce(ce),
+	.audio_ce(audio_ce),
 	.enable(me[69] | (me[31] && exp_audioe[5])),
 	.wren(prg_write),
 	.addr_in(prg_ain),
@@ -2571,6 +2579,7 @@ wire [7:0] n163_data;
 namco163_mixed snd_n163 (
 	.clk(clk),
 	.ce(ce),
+	.audio_ce(audio_ce),
 	.submapper(flags[24:21]),
 	.enable(me[19] | (me[31] && exp_audioe[4])),
 	.wren(prg_write),
@@ -2600,6 +2609,7 @@ wire [7:0] mmc5_data;
 mmc5_mixed snd_mmc5 (
 	.clk(clk),
 	.ce(ce),
+	.audio_ce(audio_ce),
 	.enable(me[5] | (me[31] && exp_audioe[3])),
 	.wren(prg_write),
 	.rden(prg_read),
@@ -2622,6 +2632,7 @@ wire [7:0] fds_data;
 fds_mixed snd_fds (
 	.clk(clk),
 	.ce(ce),
+	.audio_ce(audio_ce),
 	.enable(me[20] | (me[31] && exp_audioe[2])),
 	.wren(prg_write),
 	.addr_in(prg_ain),
@@ -2642,6 +2653,7 @@ wire [15:0] vrc7_audio;
 vrc7_mixed snd_vrc7 (
 	.clk(clk),
 	.ce(ce),
+	.audio_ce(audio_ce),
 	.enable(me[85] | (me[31] && exp_audioe[1])),
 	.wren(prg_write),
 	.addr_in(prg_ain),
@@ -2656,6 +2668,7 @@ wire [15:0] vrc6_audio;
 vrc6_mixed snd_vrc6 (
 	.clk(clk),
 	.ce(ce),
+	.audio_ce(audio_ce),
 	.enable(me[24] | me[26] | (me[31] && exp_audioe[0])),
 	.wren(prg_write),
 	.addr_invert(me[26]),

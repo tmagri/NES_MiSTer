@@ -2,6 +2,7 @@
 module Mapper69(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
+	input        audio_ce,
 	input        mapper_ce,   // Native un-overclocked M2
 	input        enable,      // Mapper enabled
 	input [31:0] flags,       // Cart flags
@@ -204,6 +205,7 @@ endmodule
 module SS5b_mixed (
 	input         clk,
 	input         ce,    // Negedge M2 (aka CPU ce)
+	input         audio_ce,
 	input         enable,
 	input         wren,
 	input  [15:0] addr_in,
@@ -222,6 +224,7 @@ module SS5b_mixed (
 SS5b_audio snd_5b (
 	.clk(clk),
 	.ce(ce),
+	.audio_ce(audio_ce),
 	.enable(enable),
 	.wren(wren),
 	.addr_in(addr_in),
@@ -253,6 +256,7 @@ endmodule
 module SS5b_audio (
 	input         clk,
 	input         ce,    // Negedge M2 (aka CPU ce)
+	input         audio_ce,
 	input         enable,
 	input         wren,
 	input  [15:0] addr_in,
@@ -352,51 +356,54 @@ end else if (SaveStateBus_load) begin
 	envelope_a   <= SS_MAP4[32:27];
 	envelope_b   <= SS_MAP4[38:33];
 	envelope_c   <= SS_MAP4[44:39];
-end else if (ce) begin
-	cycles <= cycles + 1'b1;
-
-	// Write registers
-	if (wren) begin
-		if (addr_in[15:13] == 3'b110)  // C000
-			reg_select <= data_in[3:0];
-		if (addr_in[15:13] == 3'b111)  // E000
-			internal[reg_select] <= data_in;
-	end
-
-	tone_a_cnt <= tone_a_next[11:0];
-	tone_b_cnt <= tone_b_next[11:0];
-	tone_c_cnt <= tone_c_next[11:0];
-
-	if (tone_a_next >= period_a) begin
-		tone_a_cnt <= 12'd0;
-		tone_a <= tone_a + 1'b1;
-	end
-
-	if (tone_b_next >= period_b) begin
-		tone_b_cnt<= 12'd0;
-		tone_b <= tone_b + 1'b1;
-	end
-
-	if (tone_c_next >= period_c) begin
-		tone_c_cnt <= 12'd0;
-		tone_c <= tone_c + 1'b1;
-	end
-
-	// XXX: Implement modulation envelope if needed (not used in any games)
-	envelope_a <= {env_vol_a, 1'b1};
-	envelope_b <= {env_vol_b, 1'b1};
-	envelope_c <= {env_vol_c, 1'b1};
-
-	if (&cycles) begin
-		// Advance noise LFSR every 32 cycles
-		noise_cnt <= noise_next[11:0];
-
-		if (noise_next >= period_n) begin
-			noise_lfsr <= {noise_lfsr[15:0], noise_lfsr[16] ^ noise_lfsr[13]};
-			noise_cnt <= 12'd0;
+end else begin
+	if (ce) begin
+		// Write registers
+		if (wren) begin
+			if (addr_in[15:13] == 3'b110)  // C000
+				reg_select <= data_in[3:0];
+			if (addr_in[15:13] == 3'b111)  // E000
+				internal[reg_select] <= data_in;
 		end
 	end
 
+	if (audio_ce) begin
+		cycles <= cycles + 1'b1;
+
+		tone_a_cnt <= tone_a_next[11:0];
+		tone_b_cnt <= tone_b_next[11:0];
+		tone_c_cnt <= tone_c_next[11:0];
+
+		if (tone_a_next >= period_a) begin
+			tone_a_cnt <= 12'd0;
+			tone_a <= tone_a + 1'b1;
+		end
+
+		if (tone_b_next >= period_b) begin
+			tone_b_cnt<= 12'd0;
+			tone_b <= tone_b + 1'b1;
+		end
+
+		if (tone_c_next >= period_c) begin
+			tone_c_cnt <= 12'd0;
+			tone_c <= tone_c + 1'b1;
+		end
+
+		// XXX: Implement modulation envelope if needed (not used in any games)
+		envelope_a <= {env_vol_a, 1'b1};
+		envelope_b <= {env_vol_b, 1'b1};
+		envelope_c <= {env_vol_c, 1'b1};
+
+		if (&cycles) begin
+			// Advance noise LFSR every 32 cycles
+			noise_cnt <= noise_next[11:0];
+
+			if (noise_next >= period_n) begin
+				noise_lfsr <= {noise_lfsr[15:0], noise_lfsr[16] ^ noise_lfsr[13]};
+				noise_cnt <= 12'd0;
+			end
+		end
+	end
 end
 
 wire output_a, output_b, output_c;
@@ -492,6 +499,7 @@ endmodule
 module Mapper67 (
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
+	input        audio_ce,
 	input        mapper_ce,   // Native un-overclocked M2
 	input        enable,      // Mapper enabled
 	input [31:0] flags,       // Cart flags

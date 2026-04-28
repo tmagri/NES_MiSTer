@@ -1137,6 +1137,7 @@ module APU #(
 	input  logic        clk,
 	input  logic        PHI2,
 	input  logic        ce,
+	input  logic        audio_ce,
 	input  logic  [1:0] overclock,     // 0=off, 1=mild (+33%), 2=full (+100%)
 	input  logic        reset,
 	input  logic        cold_reset,
@@ -1245,10 +1246,10 @@ module APU #(
 	                1'b1;
 
 	logic aclk1, aclk2, aclk1_delayed, phi1;
-	assign aclk1         = ce & get_or_put & pitch_ce;
+	assign aclk1         = audio_ce & get_or_put & pitch_ce;
 	assign aclk2         = phi2_ce & ~get_or_put & pitch_ce;
-	assign aclk1_delayed = ce & ~get_or_put & pitch_ce;
-	assign phi1          = ce & pitch_ce;
+	assign aclk1_delayed = audio_ce & ~get_or_put & pitch_ce;
+	assign phi1          = audio_ce & pitch_ce;
 
 	// DMA requires full speed CPU ticks to prevent double-writing to $2004 OAM
 	assign get_ce = ce & get_or_put;

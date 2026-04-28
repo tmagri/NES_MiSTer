@@ -112,6 +112,7 @@ module NES(
 	output        cpumem_write,
 	output  [7:0] cpumem_dout,
 	input   [7:0] cpumem_din,
+	input         cpumem_busy,
 	output [21:0] ppumem_addr,
 	output        ppumem_read,
 	output        ppumem_write,
@@ -220,7 +221,7 @@ module NES(
 // - PPU read/write should happen on the last PPU tick in a CPU cycle (usually third)
 
 assign nes_div = div_sys;
-assign apu_ce = cpu_ce;
+assign apu_ce = native_ce;
 
 wire [7:0] from_data_bus;
 wire [7:0] cpu_dout;
@@ -253,16 +254,16 @@ reg [2:0] div_ppu_n_base = 3'd4;
 reg is_medium_oc = 1'b0;
 reg [1:0] overclock_latched = 2'd0;
 
-// Dynamic PPU divider: For Medium (1.50x), CPU div is 8. To maintain the crucial 3:1 PPU:CPU 
-// ratio, the PPU divider must average 2.66. We safely achieve this perfectly by alternating 
-// the PPU divider: 3, 3, 2 (8 master clocks = exactly 3 PPU ticks).
+// Dynamic PPU divider
 wire [2:0] div_ppu_n = (is_medium_oc && ppu_tick == 2) ? 3'd2 : div_ppu_n_base;
 
 // Counters
 reg [4:0] div_cpu = 5'd1;
 reg [4:0] div_native_cpu = 5'd1;
+reg [4:0] div_mapper = 5'd1;
 wire native_ce = (div_native_cpu == 5'd12);
-wire mapper_ce = (div_native_cpu == 5'd10);
+wire mapper_ce = (div_mapper == 5'd12);
+wire audio_ce  = native_ce; // Always runs at unoverclocked 1.78MHz, never stalls
 reg [2:0] div_ppu = 3'd1;
 reg [1:0] div_sys = 2'd0;
 
@@ -270,19 +271,51 @@ reg [1:0] div_sys = 2'd0;
 wire cpu_ce  = (div_cpu == div_cpu_n);
 wire ppu_ce  = (div_ppu == div_ppu_n);
 assign ppu_ce_out = ppu_ce;
-wire cart_ce = (div_cpu == (overclock_latched[1] ? div_cpu_n - 5'd1 : div_cpu_n - 5'd2)); // Late trigger for Medium/Extreme (Mode 2/3)
+wire cart_ce = (div_cpu == (overclock_latched != 2'd0 ? div_cpu_n - 5'd1 : div_cpu_n - 5'd2));
 
-// Signals — all offsets relative to div_cpu_n so they scale with OC level
-wire cart_pre = (div_cpu >= div_cpu_n - 5'd6) && (div_cpu <= (overclock_latched[1] ? div_cpu_n - 5'd1 : div_cpu_n - 5'd2));
+// To give SDRAM maximum time to fetch data before `cpu_ce`, we assert `cart_pre` early.
+// Clamp cart_pre_start to prevent underflow on higher OC levels (÷4, ÷3).
+wire [4:0] cart_pre_start = (div_cpu_n <= 5'd6) ? 5'd1 : div_cpu_n - 5'd6;
+wire cart_pre = (div_cpu >= cart_pre_start) && (div_cpu <= (overclock_latched != 2'd0 ? div_cpu_n - 5'd1 : div_cpu_n - 5'd2));
 
-wire ppu_read  = (ppu_tick == 1);
-wire ppu_write = (ppu_tick == 1);
+// SDRAM cache miss stall logic
+wire cpumem_req = cpumem_read || cpumem_write;
+reg cpumem_active;
+always @(posedge clk) begin
+	if (cpu_ce) begin
+		cpumem_active <= 0;
+	end else if (cpumem_req && cpumem_busy) begin
+		cpumem_active <= 1;
+	end
+end
+wire cpumem_pending = cpumem_req && (!cpumem_active || cpumem_busy);
 
-// phi2 (M2 high phase): rises after address-setup time and falls at cpu_ce.
-// The setup time scales as div_cpu_n/3 so phi2 always overlaps with
-// ppu_tick==1 (ppu_write) at every valid OC level.
+wire cpumem_stall = cart_ce && cpumem_pending;
+
+// The real PPU has a CS pin which is a combination of the output of the 74319 (ppu address selector)
+// and the M2 pin from the CPU.
+wire ppu_cs = addr >= 'h2000 && addr < 'h4000;
+
+// PPU-access handshake logic
+reg ppu_acc_done;
+wire ppu_cs_sync = ppu_cs && !ppu_acc_done;
+
+always @(posedge clk) begin
+	if (reset_nes)
+		ppu_acc_done <= 1'b0;
+	else if (cpu_ce)
+		ppu_acc_done <= 1'b0; // Reset for next CPU cycle
+	else if (ppu_ce && ppu_cs_sync)
+		ppu_acc_done <= 1'b1; // PPU accepts the transaction
+end
+
+// Stall if we reach the end of the CPU cycle (div_cpu_n - 1) and PPU hasn't taken the request
+wire cpu_ppu_stall = (div_cpu == div_cpu_n - 5'd1) && ppu_cs_sync && !ppu_ce;
+
+reg native_odd_or_even = 1;
+
+// phi2 (M2 high phase) - Retained purely for APU/Native audio compatibility
 wire phi2 = (div_cpu > (div_cpu_n / 3)) && (div_cpu < div_cpu_n);
-
 
 // -----------------------------------------------------------------------
 // CPU-Only Overclocking (Vblank Extension)
@@ -290,11 +323,7 @@ wire phi2 = (div_cpu > (div_cpu_n / 3)) && (div_cpu < div_cpu_n);
 // frame so that at the faster pixel clock, the frame still takes 1/60th 
 // of a second to render.
 // -----------------------------------------------------------------------
-wire [9:0] oc_extra_lines = 
-	(overclock_latched == 2'd1) ? ((sys_type == 2'b00) ? 10'd87  : 10'd104) : // Turbo   (1.33x PPU clock extension)
-	(overclock_latched == 2'd2) ? ((sys_type == 2'b00) ? 10'd131 : 10'd156) : // Medium  (1.50x PPU clock extension)
-	(overclock_latched == 2'd3) ? ((sys_type == 2'b00) ? 10'd262 : 10'd312) : // Extreme (2.00x PPU clock extension)
-	10'd0;
+wire [9:0] oc_extra_lines = 10'd0; // PPU is fixed at 1x, no VBlank extension needed
 
 wire [9:0] max_native_sl = (sys_type == 2'b00) ? 10'd261 : 10'd311;
 wire mapper_irq_pause = (scanline > max_native_sl);
@@ -359,28 +388,35 @@ always @(posedge clk) begin
 		freeze_clocks  <= 0;
 		faux_pixel_cnt <= 0;
 		overclock_latched <= overclock;
-		is_medium_oc <= (overclock == 2'd2);
+		is_medium_oc <= 1'b0; // Dynamic PPU divider no longer needed
 		case (overclock)
-			2'd1:    begin div_cpu_n <= 5'd9;  div_ppu_n_base <= 3'd3; end  // Turbo   1.33x (÷9/÷3)
-			2'd2:    begin div_cpu_n <= 5'd8;  div_ppu_n_base <= 3'd3; end  // Medium  1.50x (dynamic 3-3-2)
-			2'd3:    begin div_cpu_n <= 5'd6;  div_ppu_n_base <= 3'd2; end  // Extreme 2.00x (÷6/÷2)
-			default: begin div_cpu_n <= 5'd12; div_ppu_n_base <= 3'd4; end  // Off     1.00x (÷12/÷4)
+			2'd1:    begin div_cpu_n <= 5'd6;  div_ppu_n_base <= 3'd4; end  // 2x
+			2'd2:    begin div_cpu_n <= 5'd4;  div_ppu_n_base <= 3'd4; end  // 3x
+			2'd3:    begin div_cpu_n <= 5'd3;  div_ppu_n_base <= 3'd4; end  // 4x (effectively ~3.5x with wait states)
+			default: begin div_cpu_n <= 5'd12; div_ppu_n_base <= 3'd4; end  // Off
 		endcase
 	end
 	if (cpu_ce && !reset_nes) hold_reset <= 0;
 	if (~freeze_clocks | ~(div_ppu == (div_ppu_n - 1'b1))) begin
-		if (~skip_ppu_cycle) begin
-			div_cpu <= cpu_ce || (ppu_ce && div_cpu > div_cpu_n) ? 5'd1 : div_cpu + 5'd1;
-			div_native_cpu <= native_ce || (ppu_ce && div_native_cpu > 5'd12) ? 5'd1 : div_native_cpu + 5'd1;
+		div_native_cpu <= native_ce || (ppu_ce && div_native_cpu > 5'd12) ? 5'd1 : div_native_cpu + 5'd1;
+		// Only SDRAM cache misses freeze the whole system
+		if (~skip_ppu_cycle && ~cpumem_stall) begin
+			
+			// PPU access alignment only freezes the CPU and Mapper
+			if (~cpu_ppu_stall) begin
+				div_cpu <= cpu_ce || (ppu_ce && div_cpu > div_cpu_n) ? 5'd1 : div_cpu + 5'd1;
+				div_mapper <= mapper_ce || (ppu_ce && div_mapper > 5'd12) ? 5'd1 : div_mapper + 5'd1;
+			end
+			
+			// PPU clock always advances, resolving the stall when ppu_tick hits 1
+			div_ppu <= ppu_ce ? 3'd1 : div_ppu + 3'd1;
+
+			// reset the ticker on the first ppu tick at or after a cpu tick.
+			if (cpu_ce)
+				ppu_tick <= 0;
+			else if (ppu_ce)
+				ppu_tick <= ppu_tick + 1'b1;
 		end
-
-		div_ppu <= ppu_ce ? 3'd1 : div_ppu + 3'd1;
-
-		// reset the ticker on the first ppu tick at or after a cpu tick.
-		if (cpu_ce)
-			ppu_tick <= 0;
-		else if (ppu_ce)
-			ppu_tick <= ppu_tick + 1'b1;
 	end
 
 	// Add one extra PPU tick every 5 cpu cycles for PAL.
@@ -406,6 +442,7 @@ always @(posedge clk) begin
 	if (reset_nes | hold_reset) begin
 		bootvector_flag <= 1;
 		odd_or_even <= 1;
+		native_odd_or_even <= 1;
 	end else if (loading_savestate) begin
 		odd_or_even    <= SS_TOP[0];
 		div_cpu        <= SS_TOP[21:17];
@@ -419,9 +456,14 @@ always @(posedge clk) begin
 		div_cpu_n         <= SS_TOP[43:39];
 		div_ppu_n_base    <= SS_TOP[46:44];
 		is_medium_oc      <= SS_TOP[47];
-	end else if (cpu_ce) begin
-		odd_or_even <= ~odd_or_even;
-		bootvector_flag <= 0;
+	end else begin
+		if (cpu_ce) begin
+			odd_or_even <= ~odd_or_even;
+			bootvector_flag <= 0;
+		end
+		if (native_ce) begin
+			native_odd_or_even <= ~native_odd_or_even;
+		end
 	end
 
 	// Realign if the system type changes or reset just finished.
@@ -565,6 +607,11 @@ wire [7:0]  dbus = dma_aout_enable ? dma_data_to_ram : cpu_dout;
 wire mr_int      = dma_aout_enable ? dma_read  : cpu_rnw;
 wire mw_int      = dma_aout_enable ? !dma_read : !cpu_rnw;
 wire get_ce, put_ce;
+assign get_ce = cpu_ce & odd_or_even;
+assign put_ce = cpu_ce & ~odd_or_even;
+
+wire native_get_ce;
+wire native_put_ce;
 
 DmaController dma(
 	.clk            (clk),
@@ -606,7 +653,8 @@ APU apu(
 	.CS             (apu_cs),
 	.PAL            (sys_type == 2'b01),
 	.ce             (apu_ce),
-	.overclock      (overclock_latched), // use latched value so savestate restores correct pitch
+	.audio_ce       (audio_ce),
+	.overclock      (2'd0), // APU always runs at 1x speed now
 	.reset          (reset),
 	.cold_reset     (cold_reset),
 	.ADDR           (addr[4:0]),
@@ -624,10 +672,10 @@ APU apu(
 	.DmaAck         (apu_dma_ack),
 	.DmaAddr        (apu_dma_addr),
 	.DmaData        (dma_data_bus),
-	.get_or_put     (odd_or_even),
+	.get_or_put     (native_odd_or_even),
 	.IRQ            (apu_irq),
-	.put_ce         (put_ce),
-	.get_ce         (get_ce),
+	.put_ce         (native_put_ce),
+	.get_ce         (native_get_ce),
 	.smooth_audio   (smooth_audio),
 	.smooth_noise   (smooth_noise),
 	// savestates
@@ -670,13 +718,6 @@ assign joypad_clock = {joypad2_cs && cpu_rnw, joypad1_cs && cpu_rnw};
 /*************             PPU              ***************/
 /**********************************************************/
 
-// The real PPU has a CS pin which is a combination of the output of the 74319 (ppu address selector)
-// and the M2 pin from the CPU. This will only be low for 1 and 7/8th PPU cycles, or
-// 7 and 1/2 master cycles on NTSC. Therefore, the PPU should read or write once per cpu cycle, and
-// with our alignment, this should occur at PPU cycle 2 (the *third* cycle).
-wire mr_ppu     = mr_int && ppu_read; // Read *from* the PPU.
-wire mw_ppu     = mw_int && ppu_write; // Write *to* the PPU.
-wire ppu_cs = addr >= 'h2000 && addr < 'h4000;
 wire [7:0] ppu_dout;            // Data from PPU to CPU
 wire chr_read, chr_write, chr_read_ex;       // If PPU reads/writes from VRAM
 wire [13:0] chr_addr, chr_addr_ex;           // Address PPU accesses in VRAM
@@ -689,7 +730,7 @@ assign scanline = (corepause_active) ? scanline_paused : scanline_ppu;
 
 PPU ppu(
 	.clk              (clk),
-	.cs               (addr[15:13] == 3'b001 && phi2),
+	.cs               (ppu_cs_sync),
 	.RWn              (mr_int && !mw_int),
 	.rst_behavior     (ppu_rst_behavior),
 	.ce               (ppu_ce),
@@ -702,8 +743,8 @@ PPU ppu(
 	.din              (dbus),
 	.dout             (ppu_dout),
 	.ain              (addr[2:0]),
-	.read             (ppu_cs && mr_ppu),
-	.write            (ppu_cs && mw_ppu),
+	.read             (ppu_cs_sync && mr_int),
+	.write            (ppu_cs_sync && mw_int),
 	.nmi              (nmi),
 	.vram_r           (chr_read),
 	.vram_r_ex        (chr_read_ex),
@@ -790,9 +831,10 @@ cart_top multi_mapper (
 	.audio_in          (audio_mappers),           // Amplified and inverted APU audio
 	.audio             (sample_ext),              // Mixed audio output from cart
 	.mapper_irq_pause  (mapper_irq_pause),        // Pause cycle-based mappers during OC extended Vblank
-	.mapper_ce         (mapper_ce),               // Always runs at unoverclocked 1.78MHz
-	.put_ce            (put_ce),                  // Pass phase-aligned CE for expansion audio
-	.overclock         (overclock_latched),        // use latched value so savestate restores correct pitch
+	.mapper_ce         (mapper_ce),               // Pauses with CPU, used for cycle-based IRQs
+	.audio_ce          (audio_ce),                // Never pauses, used for expansion audio
+	.put_ce            (native_put_ce),           // Pass phase-aligned CE for expansion audio
+	.overclock         (2'd0),                    // Expansion audio runs at 1x speed now
 	.smooth_audio      (smooth_audio),            // Option toggle
 	// SDRAM Communication
 	.prg_aout          (prg_linaddr),             // SDRAM adjusted PRG RAM address

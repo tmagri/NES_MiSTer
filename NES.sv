@@ -241,7 +241,7 @@ parameter CONF_STR = {
 	"d7rA,Save state(Alt+F1-F4);",
 	"d7rB,Restore state(F1-F4);",
 	"-;",
-	"O[72:71],CPU Overclock,Off,Turbo (1.33x),Medium (1.50x),Extreme (2.00x);",
+	"O[72:71],CPU Overclock,Off,2x CPU,3x CPU,3.5x CPU (Max);",
 	"O[79:78],OC Method,Auto,Postrender,VBlank;",
 	"-;",
 	"P1,Audio & Video;",
@@ -585,7 +585,7 @@ reg   [7:0] joypad_d3, joypad_d4;
 reg   [1:0] last_joypad_clock;
 
 wire [15:0] sample_sq1, sample_sq2, sample_tri, sample_noi, sample_dmc, sample_ext;
-wire [15:0] audio_l_pre, audio_r_pre, audio_l_stretched, audio_r_stretched;
+wire [15:0] audio_l_final, audio_r_final;
 wire stereo_en = status[74];
 
 // sample_ext now contains PURE expansion audio (APU is muted to the cart)
@@ -614,29 +614,9 @@ wire [16:0] left_mix  = apu_l_sum + {1'b0, exp_only} + 17'h02000;
 wire [16:0] right_mix = apu_r_sum + {1'b0, exp_only} + 17'h02000;
 
 // High quality output with saturation
-assign audio_l_pre = left_mix[16]  ? 16'hFFFF : left_mix[15:0];
-assign audio_r_pre = right_mix[16] ? 16'hFFFF : right_mix[15:0];
-
-// Audio Stretching (Set to 1.0x as pitch is now corrected internally in APU/Mappers)
-audio_stretch stretch_l (
-	.clk(clk),
-	.sample_ce(apu_ce),
-	.sample_in(audio_l_pre),
-	.overclock(2'd0),
-	.sample_out(audio_l_stretched)
-);
-
-audio_stretch stretch_r (
-	.clk(clk),
-	.sample_ce(apu_ce),
-	.sample_in(audio_r_pre),
-	.overclock(2'd0),
-	.sample_out(audio_r_stretched)
-);
-
-// Final outputs
-wire [15:0] audio_l_final = audio_l_stretched;
-wire [15:0] audio_r_final = audio_r_stretched;
+// Final mix with saturation
+assign audio_l_final = left_mix[16]  ? 16'hFFFF : left_mix[15:0];
+assign audio_r_final = right_mix[16] ? 16'hFFFF : right_mix[15:0];
 
 wire [11:0] powerpad = joyA[22:11] | joyB[22:11] | joyC[22:11] | joyD[22:11];
 
@@ -938,6 +918,7 @@ reg       pausecore;
 reg [1:0] videopause_ce;
 wire      corepaused;
 wire      refresh;
+wire      cpu_busy;
 wire      sleep_savestate;
 
 assign HDMI_FREEZE = corepaused;
@@ -1040,6 +1021,7 @@ NES nes (
 	.ppumem_write    (ppu_write),
 	.ppumem_dout     (ppu_dout ),
 	.ppumem_din      (ppu_din  ),
+	.cpumem_busy     (cpu_busy ),
 	.refresh         (refresh  ),
 
 	.prg_mask        (prg_mask ),
@@ -1178,7 +1160,7 @@ sdram sdram
 	.ch1_din    ( cpu_dout  ),
 	.ch1_rd     ( cpu_read  ),
 	.ch1_dout   ( cpu_din   ),
-	.ch1_busy   ( ),
+	.ch1_busy   ( cpu_busy  ),
 
 	// reserved for backup ram save/load
 	.ch2_addr   ( ch2_addr ),

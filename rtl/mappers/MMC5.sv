@@ -3,6 +3,7 @@
 module MMC5(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
+	input        audio_ce,
 	input        enable,      // Mapper enabled
 	input [63:0] flags,       // Cart flags
 	input [15:0] prg_ain,     // prg address
@@ -696,6 +697,7 @@ endmodule
 module mmc5_mixed (
 	input         clk,
 	input         ce,    // Negedge M2 (aka CPU ce)
+	input         audio_ce,
 	input         enable,
 	input         wren,
 	input         rden,
@@ -744,6 +746,7 @@ APU mmc5apu(
 	.MMC5           (1),
 	.clk            (clk),
 	.ce             (ce),
+	.audio_ce       (audio_ce),
 	.PHI2           (phi2),
 	.CS             (apu_cs),
 	.reset          (~enable | SaveStateBus_load),

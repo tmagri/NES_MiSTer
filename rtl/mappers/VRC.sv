@@ -4,7 +4,8 @@
 module VRC1(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
-	input        mapper_ce,   // Native un-overclocked M2
+	input        mapper_ce,
+	input        audio_ce,   // Native un-overclocked M2
 	input        mapper_irq_pause,
 	input        smooth_audio,
 	input        enable,      // Mapper enabled
@@ -134,7 +135,8 @@ endmodule
 module VRC3(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
-	input        mapper_ce,   // Native un-overclocked M2
+	input        mapper_ce,
+	input        audio_ce,   // Native un-overclocked M2
 	input        mapper_irq_pause,
 	input        smooth_audio,
 	input        enable,      // Mapper enabled
@@ -271,7 +273,8 @@ endmodule
 module VRC24(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
-	input        mapper_ce,   // Native un-overclocked M2
+	input        mapper_ce,
+	input        audio_ce,   // Native un-overclocked M2
 	input        mapper_irq_pause,
 	input        smooth_audio,
 	input        enable,      // Mapper enabled
@@ -495,7 +498,8 @@ endmodule
 module VRC6(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
-	input        mapper_ce,   // Native un-overclocked M2
+	input        mapper_ce,
+	input        audio_ce,   // Native un-overclocked M2
 	input        mapper_irq_pause,
 	input        smooth_audio,
 	input        enable,      // Mapper enabled
@@ -601,7 +605,8 @@ endmodule
 module VRC7(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
-	input        mapper_ce,   // Native un-overclocked M2
+	input        mapper_ce,
+	input        audio_ce,   // Native un-overclocked M2
 	input        mapper_irq_pause,
 	input        smooth_audio,
 	input        enable,      // Mapper enabled
@@ -1076,6 +1081,7 @@ module vrc7_mixed (
 	input         clk,
 	input         ce,
 	input         mapper_ce,
+	input         audio_ce,
 	input         smooth_audio,
 	input         enable,
 	input         wren,
@@ -1132,6 +1138,7 @@ module vrc6_mixed (
 	input         clk,
 	input         ce,    // Negedge M2 (aka CPU ce)
 	input         mapper_ce,
+	input         audio_ce,
 	input         put_ce,
 	input   [1:0] overclock,
 	input         smooth_audio,
@@ -1154,6 +1161,7 @@ module vrc6_mixed (
 vrc6sound snd_vrc6 (
 	.clk(clk),
 	.ce(ce),
+	.audio_ce(audio_ce),
 	.put_ce(put_ce),
 	.overclock(overclock),
 	.enable(enable),
@@ -1206,6 +1214,7 @@ endmodule
 module vrc6sound(
 	input clk,
 	input ce,
+	input audio_ce,
 	input put_ce,
 	input [1:0] overclock,
 	input enable,
@@ -1280,29 +1289,7 @@ wire [7:0]  inc_1  = err_2 >= fa_1 ? 8'd1 : 8'd0;
 
 wire [7:0] total_inc = inc_32 + inc_16 + inc_8 + inc_4 + inc_2 + inc_1;
 
-// -----------------------------------------------------------------------
-// Overclock Pitch Corrector (Synchronized with APU)
-// Frequency dividers must tick at 1.78MHz rate to preserve correct pitch.
-// This logic skips cycles of the overclocked `ce` to maintain 1x speed.
-// -----------------------------------------------------------------------
-reg [1:0] pitch_cnt = 0;
-always @(posedge clk) begin
-	if (~enable)
-		pitch_cnt <= 0;
-	else if (ce) begin
-		case (overclock)
-			2'd1:    pitch_cnt <= (pitch_cnt == 2'd3) ? 2'd0 : pitch_cnt + 2'd1; // 1.33x -> skip 1 of 4 (3/4 rate)
-			2'd2:    pitch_cnt <= (pitch_cnt == 2'd2) ? 2'd0 : pitch_cnt + 2'd1; // 1.50x -> skip 1 of 3 (2/3 rate)
-			2'd3:    pitch_cnt <= (pitch_cnt == 2'd1) ? 2'd0 : pitch_cnt + 2'd1; // 2.00x -> skip 1 of 2 (1/2 rate)
-			default: pitch_cnt <= 2'd0;
-		endcase
-	end
-end
-
-wire pitch_ce = (overclock == 2'd1) ? (pitch_cnt != 2'd3) :
-                (overclock == 2'd2) ? (pitch_cnt != 2'd2) :
-                (overclock == 2'd3) ? (pitch_cnt == 2'd0) :
-                1'b1;
+// Overclock pitch correction removed: audio_ce now provides a constant 1.78MHz clock.
 
 always@(posedge clk) begin
 	if(~enable) begin
@@ -1335,8 +1322,8 @@ always@(posedge clk) begin
 		// Re-sync smoothing variables natively on state load (acc * 17)
 		smooth_acc <= {SS_MAP2[58:51], 4'd0} + {4'd0, SS_MAP2[58:51]};
 		err_acc    <= 0;
-	end else if(ce) begin
-		if(wr) begin
+	end else begin
+		if(ce && wr) begin
 			case(ain)
 				16'h9000: {mode0, duty0, vol0}<=din;
 				16'h9001: freq0[7:0]<=din;
@@ -1351,7 +1338,7 @@ always@(posedge clk) begin
 				16'hB002: {en2, freq2[11:8]}<={din[7],din[3:0]};
 			endcase
 		end
-		if(pitch_ce) begin  // Gate frequency dividers at 1x rate
+		if(audio_ce) begin  // Constant 1.78MHz
 			if(en0) begin
 				if(div0!=0)
 					div0<=div0-1'd1;
@@ -1396,7 +1383,7 @@ always@(posedge clk) begin
 					end
 				end
 			end
-		end  // pitch_ce
+		end  // audio_ce
 	end
 end
 
@@ -1453,7 +1440,8 @@ endmodule
 module VRC5(
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
-	input        mapper_ce,   // Native un-overclocked M2
+	input        mapper_ce,
+	input        audio_ce,   // Native un-overclocked M2
 	input        mapper_irq_pause,
 	input        smooth_audio,
 	input        enable,      // Mapper enabled
